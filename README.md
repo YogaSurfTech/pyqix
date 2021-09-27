@@ -1,5 +1,5 @@
 # pyqix
-Remake of the 1981 Taito Game Qix for the 40th anniversary on 18th October 2021
+A faithful remake of the 1981 Taito Game Qix for the 40th anniversary on 18th October 2021
 
 a sneak-peek release can be found here: https://github.com/YogaSurfTech/pyqix/releases/download/0.5.0/qix_0.5.0.7z
 
