@@ -10,8 +10,14 @@ WINDOW_HEIGHT = 1024
 X_SCALE = (WIDTH / 256.0)
 Y_SCALE = (HEIGHT / 256.0)
 
+TPS = 60  # number of game updates per second
+SKIP_TICKS = 1000 / TPS  # ms to start skipping frames
+MAX_FRAMESKIP = 5  # no we calc max updates (if we are behind) before displaying
+MAX_TIMESKIP = 2000  # max Time we try to catch up until we just reset counter
+
 screen = None
 window_surface = None
+frame_counter = 0  # counts the frames (updating qix not every frame)
 logo = None
 
 
@@ -33,6 +39,11 @@ def hal_load_image(fullname, color_key=None):
     return image, image.get_rect()
 
 
+def get_real_time():
+    """ Real time of the system in ms after pygame.init"""
+    return pygame.time.get_ticks()
+
+
 def paint_game():
     hal_blt(logo, (24, 16))
 
@@ -47,11 +58,20 @@ def init():
     logo = pygame.transform.scale(logo, (int(56.0 * X_SCALE), int(20 * Y_SCALE)))
 
 
-def gameloop():		# http://www.koonsolo.com/news/dewitters-gameloop/
+def gameloop():  # https://dewitters.com/dewitters-gameloop/
+    global frame_counter
+    next_game_tick = get_real_time() - 1
     while 1:
-        for event in pygame.event.get():
-            if event.type == QUIT:
-                return
+        loops = 0
+        while get_real_time() > next_game_tick and loops < MAX_FRAMESKIP:
+            for event in pygame.event.get():
+                if event.type == QUIT:
+                    return
+            frame_counter += 1
+            next_game_tick += SKIP_TICKS
+            if get_real_time() > next_game_tick + MAX_TIMESKIP:
+                next_game_tick = get_real_time() + SKIP_TICKS
+            loops += 1
         screen.fill(0)
         paint_game()
         window_tmp = pygame.transform.scale(screen, (WINDOW_WIDTH, WINDOW_HEIGHT))
@@ -67,4 +87,3 @@ if __name__ == '__main__':
     print("On the occasion of the 40th anniversary of the release at 18th. October 2021")
     init()
     gameloop()
-
