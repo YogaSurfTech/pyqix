@@ -17,20 +17,33 @@ SKIP_TICKS = 1000 / TPS  # ms to start skipping frames
 MAX_FRAMESKIP = 5  # no we calc max updates (if we are behind) before displaying
 MAX_TIMESKIP = 2000  # max Time we try to catch up until we just reset counter
 
-BLACK = 0
-WHITE = 1
+BLACK = FONT_NORMAL = 0
+WHITE = CENTER_X = FONT_LARGE = 1
+DARKGREY = CENTER_Y = FONT_SCORE = 2
+YELLOW = CENTER = 3
+MIDRED = NO_BLIT = 4
 
+fonts = None
 screen = None
 window_surface = None
-frame_counter = 0  # counts the frames (updating qix not every frame)
 logo = None
+active_live = None
+inactive_live = None
 color = [(0, 0, 0), (255, 255, 255), (73, 73, 73),        # BLACK,   WHITE,  DARKGREY
          (255, 255, 73), (217, 92, 74), (128, 128, 128),  # YELLOW,  MIDRED, GREY
          (255, 73, 73), (73, 73, 255), (73, 255, 73),     # RED,     BLUE,   GREEN,
          (145, 36, 18), (0, 127, 127)]                    # DARKRED, CYAN
+frame_counter = 0  # counts the frames (updating qix not every frame)
+current_player = 0
+max_player = 2
 # ------- per player --------
 playfield = [[], []]  # the array of vertex, holding the borders of the game
+player_lives = [0, 0]  # num lives of both players
+scores = [0, 0]
 # ---------------------
+start_player_lives = 3
+live_coord = (234, 14)
+highscore = [(30000, "QIX") for i in range(10)]
 new_playfield = [(16, 39), (16, 239), (240, 239), (240, 39)]
 
 
@@ -63,6 +76,24 @@ def get_real_time():
     return pygame.time.get_ticks()
 
 
+def print_at(str_text, coords, txt_color=color[YELLOW], center_flags=0, anti_aliasing=1, use_font=FONT_NORMAL):
+    if center_flags & 0x04 == 0:
+        text = fonts[use_font].render(str_text, anti_aliasing, txt_color)
+    else:
+        return fonts[use_font].size(str_text)
+    xco = coords[0]
+    yco = coords[1]
+    w = text.get_rect().width
+    h = text.get_rect().height
+    if center_flags & 0x01 != 0:
+        xco = (WIDTH - w) / 2 / X_SCALE
+    if center_flags & 0x02 != 0:
+        yco = (HEIGHT - h) / 2 / Y_SCALE
+    text_pos = Rect(xco, yco, w, h)
+    hal_blt(text, text_pos)
+    return text_pos[2:]
+
+
 def draw_list(p_list, arg_color, closed=True):
     upper_limit = len(p_list)
     if not closed:
@@ -72,13 +103,37 @@ def draw_list(p_list, arg_color, closed=True):
                       p_list[(index + 1) % len(p_list)], arg_color)
 
 
+def paint_score():
+    print_at("%d  %s" % (highscore[0][0], highscore[0][1]), (0, 13),
+             txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
+    for index in range(max_player):      # paint score for both player
+        dim = print_at(str(scores[index]), (0, 0), color[WHITE], center_flags=NO_BLIT, use_font=FONT_SCORE)
+        coords = (232 - dim[0] / X_SCALE, 16 + index * 11)
+        print_at(str(scores[index]), coords, color[WHITE], use_font=FONT_SCORE)
+
+
+def paint_claimed_and_lives():
+    print_at("CLAIMED", (0, 22), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
+    print_at("0%  75%", (0, 29), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
+    for player in range(max_player):
+        for index in range(start_player_lives):
+            start_coord = [(live_coord[0] + (index // 3) * 4),
+                           (live_coord[1] + 11 * current_player + (index % 3) * 4)]
+            if player_lives[player] == start_player_lives - index:
+                hal_blt(active_live, start_coord)
+            else:
+                hal_blt(inactive_live, start_coord)
+
+
 def paint_playfield():
-    draw_list(playfield[0], color[WHITE])
+    draw_list(playfield[current_player], color[WHITE])
 
 
 def paint_game():
     hal_blt(logo, (24, 16))
+    paint_score()
     paint_playfield()
+    paint_claimed_and_lives()
 
 
 def reset_playfield(index_player):
@@ -87,12 +142,19 @@ def reset_playfield(index_player):
 
 
 def init():
-    global window_surface, screen, logo
+    global window_surface, screen, logo, fonts, active_live, inactive_live
     pygame.init()
     window_surface = pygame.display.set_mode([WINDOW_WIDTH, WINDOW_HEIGHT])
     screen = pygame.Surface((WIDTH, HEIGHT))
+    fonts = [pygame.font.Font("data/qix-small.ttf", int(8.0 * Y_SCALE)),
+             pygame.font.Font("data/qix-large.ttf", int(8.0 * Y_SCALE)),
+             pygame.font.Font("data/qix-large.ttf", int(10.0 * Y_SCALE))]
     logo, _ = hal_load_image(os.path.join('data', 'qix_logo.png'))
     logo = pygame.transform.scale(logo, (int(56.0 * X_SCALE), int(20 * Y_SCALE)))
+    active_live, _ = hal_load_image(os.path.join('data', 'qix_live_w.png'))
+    active_live = pygame.transform.scale(active_live, (int(3.0 * X_SCALE), int(3.0 * Y_SCALE)))
+    inactive_live, _ = hal_load_image(os.path.join('data', 'qix_live_r.png'))
+    inactive_live = pygame.transform.scale(inactive_live,  (int(3.0 * X_SCALE), int(3.0 * Y_SCALE)))
     reset_playfield(0)
 
 
