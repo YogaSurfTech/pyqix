@@ -22,6 +22,7 @@ WHITE = CENTER_X = FONT_LARGE = 1
 DARKGREY = CENTER_Y = FONT_SCORE = 2
 YELLOW = CENTER = 3
 MIDRED = NO_BLIT = 4
+RED = 6
 
 fonts = None
 screen = None
@@ -38,9 +39,12 @@ current_player = 0
 max_player = 2
 # ------- per player --------
 playfield = [[], []]  # the array of vertex, holding the borders of the game
+player_coords = [[], []]  # an  x/y coordinate
 player_lives = [0, 0]  # num lives of both players
 scores = [0, 0]
 # ---------------------
+player_size = 3.0
+player_start = [128, 239]
 start_player_lives = 3
 live_coord = (234, 14)
 highscore = [(30000, "QIX") for i in range(10)]
@@ -76,6 +80,12 @@ def get_real_time():
     return pygame.time.get_ticks()
 
 
+def hal_draw_rect(point_1, point_2, arg_color):
+    point_1 = (point_1[0] * X_SCALE, point_1[1] * Y_SCALE)
+    point_2 = (point_2[0] * X_SCALE, point_2[1] * Y_SCALE)
+    pygame.draw.rect(screen, arg_color, (point_1[0], point_1[1], point_2[0] - point_1[0], point_2[1] - point_1[1]))
+
+
 def print_at(str_text, coords, txt_color=color[YELLOW], center_flags=0, anti_aliasing=1, use_font=FONT_NORMAL):
     if center_flags & 0x04 == 0:
         text = fonts[use_font].render(str_text, anti_aliasing, txt_color)
@@ -92,6 +102,14 @@ def print_at(str_text, coords, txt_color=color[YELLOW], center_flags=0, anti_ali
     text_pos = Rect(xco, yco, w, h)
     hal_blt(text, text_pos)
     return text_pos[2:]
+
+
+def vector_add(v1, v2):
+    return [v1[0] + v2[0], v1[1] + v2[1]]
+
+
+def vector_sub(v1, v2):
+    return [v1[0] - v2[0], v1[1] - v2[1]]
 
 
 def draw_list(p_list, arg_color, closed=True):
@@ -125,6 +143,17 @@ def paint_claimed_and_lives():
                 hal_blt(inactive_live, start_coord)
 
 
+def paint_player():
+    pos = player_coords[current_player]
+    player = [vector_add(pos, (-player_size, 0)), vector_add(pos, (0, player_size)),
+              vector_add(pos, (player_size, 0)), vector_add(pos, (0, -player_size))]
+    draw_list(player, color[RED], True)
+    if X_SCALE > 1.0:
+        hal_draw_rect(vector_add(pos, (-1, -1)), vector_add(pos, (1, 1)), color[WHITE])
+    else:
+        hal_draw_rect(pos, vector_add(pos, (1, 1)), color[WHITE])  # add single pixel (pygame draws a 3x3 rect on w=0)
+
+
 def paint_playfield():
     draw_list(playfield[current_player], color[WHITE])
 
@@ -134,6 +163,7 @@ def paint_game():
     paint_score()
     paint_playfield()
     paint_claimed_and_lives()
+    paint_player()
 
 
 def reset_playfield(index_player):
@@ -142,7 +172,7 @@ def reset_playfield(index_player):
 
 
 def init():
-    global window_surface, screen, logo, fonts, active_live, inactive_live
+    global window_surface, screen, logo, fonts, active_live, inactive_live, player_lives, player_coords
     pygame.init()
     window_surface = pygame.display.set_mode([WINDOW_WIDTH, WINDOW_HEIGHT])
     screen = pygame.Surface((WIDTH, HEIGHT))
@@ -156,6 +186,8 @@ def init():
     inactive_live, _ = hal_load_image(os.path.join('data', 'qix_live_r.png'))
     inactive_live = pygame.transform.scale(inactive_live,  (int(3.0 * X_SCALE), int(3.0 * Y_SCALE)))
     reset_playfield(0)
+    player_lives = [start_player_lives, start_player_lives]
+    player_coords = [player_start, player_start]
 
 
 def gameloop():  # https://dewitters.com/dewitters-gameloop/
