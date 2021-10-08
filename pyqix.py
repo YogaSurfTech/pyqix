@@ -17,10 +17,21 @@ SKIP_TICKS = 1000 / TPS  # ms to start skipping frames
 MAX_FRAMESKIP = 5  # no we calc max updates (if we are behind) before displaying
 MAX_TIMESKIP = 2000  # max Time we try to catch up until we just reset counter
 
+BLACK = 0
+WHITE = 1
+
 screen = None
 window_surface = None
 frame_counter = 0  # counts the frames (updating qix not every frame)
 logo = None
+color = [(0, 0, 0), (255, 255, 255), (73, 73, 73),        # BLACK,   WHITE,  DARKGREY
+         (255, 255, 73), (217, 92, 74), (128, 128, 128),  # YELLOW,  MIDRED, GREY
+         (255, 73, 73), (73, 73, 255), (73, 255, 73),     # RED,     BLUE,   GREEN,
+         (145, 36, 18), (0, 127, 127)]                    # DARKRED, CYAN
+# ------- per player --------
+playfield = [[], []]  # the array of vertex, holding the borders of the game
+# ---------------------
+new_playfield = [(16, 39), (16, 239), (240, 239), (240, 39)]
 
 
 def hal_blt(img, coords):
@@ -41,13 +52,38 @@ def hal_load_image(fullname, color_key=None):
     return image, image.get_rect()
 
 
+def hal_draw_line(point_1, point_2, arg_color):
+    point_1 = (point_1[0] * X_SCALE, point_1[1] * Y_SCALE)
+    point_2 = (point_2[0] * X_SCALE, point_2[1] * Y_SCALE)
+    pygame.draw.line(screen, arg_color, point_1, point_2)
+
+
 def get_real_time():
     """ Real time of the system in ms after pygame.init"""
     return pygame.time.get_ticks()
 
 
+def draw_list(p_list, arg_color, closed=True):
+    upper_limit = len(p_list)
+    if not closed:
+        upper_limit -= 1
+    for index in range(0, upper_limit):
+        hal_draw_line(p_list[index],
+                      p_list[(index + 1) % len(p_list)], arg_color)
+
+
+def paint_playfield():
+    draw_list(playfield[0], color[WHITE])
+
+
 def paint_game():
     hal_blt(logo, (24, 16))
+    paint_playfield()
+
+
+def reset_playfield(index_player):
+    global playfield
+    playfield[index_player] = new_playfield
 
 
 def init():
@@ -57,6 +93,7 @@ def init():
     screen = pygame.Surface((WIDTH, HEIGHT))
     logo, _ = hal_load_image(os.path.join('data', 'qix_logo.png'))
     logo = pygame.transform.scale(logo, (int(56.0 * X_SCALE), int(20 * Y_SCALE)))
+    reset_playfield(0)
 
 
 def gameloop():  # https://dewitters.com/dewitters-gameloop/
@@ -73,7 +110,7 @@ def gameloop():  # https://dewitters.com/dewitters-gameloop/
             if get_real_time() > next_game_tick + MAX_TIMESKIP:
                 next_game_tick = get_real_time() + SKIP_TICKS
             loops += 1
-        screen.fill(0)
+        screen.fill(color[BLACK])
         paint_game()
         window_tmp = pygame.transform.scale(screen, (WINDOW_WIDTH, WINDOW_HEIGHT))
         window_surface.blit(window_tmp, (0, 0))
