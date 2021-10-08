@@ -2,6 +2,8 @@ import os
 
 import pygame
 from pygame.locals import *
+import math
+import itertools
 
 WIDTH = 1024
 HEIGHT = 1024
@@ -45,10 +47,12 @@ scores = [0, 0]
 # ---------------------
 player_size = 3.0
 player_start = [128, 239]
+pressed_keys = []  # sequence of pressed keys and current state
+new_playfield = [(16, 39), (16, 239), (240, 239), (240, 39)]
 start_player_lives = 3
 live_coord = (234, 14)
 highscore = [(30000, "QIX") for i in range(10)]
-new_playfield = [(16, 39), (16, 239), (240, 239), (240, 39)]
+up = down = left = right = False
 
 
 def hal_blt(img, coords):
@@ -112,6 +116,118 @@ def vector_sub(v1, v2):
     return [v1[0] - v2[0], v1[1] - v2[1]]
 
 
+def vector_equal(v1, v2, epsilon=0.00001):
+    delta = (v1[0] - v2[0])**2 + (v1[1] - v2[1])**2
+    return delta < epsilon
+
+
+def pairwise(iterable):
+    """s -> (s0,s1), (s1,s2), (s2, s3), ..."""
+    a, b = itertools.tee(iterable)
+    next(b, None)
+    return zip(a, b)
+
+
+def distance_point_line(pt, l1, l2, sqrt=True):
+    """returns distance between point and line segment
+    optionally omits calculating square root if only comparison is needed
+    :param pt: 1st point
+    :param l1: 1st point of line segment
+    :param l2: 2nd point of line segment
+    :param sqrt: if false returns squared distance
+    :return: (squared) distance between points
+    """
+    a = pt[0] - l1[0]  # var A = x - x1;
+    b = pt[1] - l1[1]  # var B = y - y1;
+    c = l2[0] - l1[0]  # var C = x2 - x1;
+    d = l2[1] - l1[1]  # var D = y2 - y1;
+    dot = a * c + b * d
+    len_sq = c * c + d * d
+    param = -1
+    if len_sq != 0:  # in case of 0 length line
+        param = float(dot) / len_sq
+
+    if param < 0:
+        xx = l1[0]
+        yy = l1[1]
+    elif param > 1:
+        xx = l2[0]
+        yy = l2[1]
+    else:
+        xx = l1[0] + param * c
+        yy = l1[1] + param * d
+
+    dx = pt[0] - xx
+    dy = pt[1] - yy
+    retval = dx * dx + dy * dy
+    if sqrt:
+        retval = math.sqrt(retval)
+    return retval
+
+
+def intersect_line(p1, p2, p3, p4, strict=False):
+    """
+    This function will intersect the two lines given by two points each
+    boolean flag strict will determine if 2nd point belongs to line
+    (so if line (( 0,  0) - (0,100) ) will intersect
+    with line   (-50,100)- (50,100) )
+    :param p1: 1st point of first line
+    :param p2: 2nd point of first line
+    :param p3: 1st point of second line
+    :param p4: 2nd point of second line
+    :param strict: if true excludes 2nd point of each line
+    :return: returns point of intersection or
+             () if no intersection or
+             the two points, if parallel lines overlap
+    """
+    retval = ()
+    t1 = t2 = 2.0
+    d1 = (p2[0] - p1[0], p2[1] - p1[1])
+    d2 = (p4[0] - p3[0], p4[1] - p3[1])
+    det = float(d1[0] * d2[1] - d2[0] * d1[1])
+    if det == 0:  # same direction => parallel lines? or same line?
+        d3 = (p3[0] - p1[0], p3[1] - p1[1])  # delta between p1 and p3
+        d4 = (p4[0] - p2[0], p4[1] - p2[1])  # delta between p2 and p4
+        det2 = float(d1[0] * d3[1] - d3[0] * d1[1])  # determinant to check if delta3 is same as delta1
+        det3 = float(d2[0] * d4[1] - d4[0] * d2[1])  # determinant to check if delta3 is same as delta1
+        if det2 == 0 and det3 == 0:  # same line
+            if d1[0] != 0:  # either d1[0] (dx must be >0 or dy >0 or its not a line)
+                t1 = (float(p3[0] - p1[0]) / d1[0])  # calc factor on same line
+                t2 = (float(p4[0] - p1[0]) / d1[0])
+            elif d1[1] != 0:
+                t1 = (float(p3[1] - p1[1]) / d1[1])
+                t2 = (float(p4[1] - p1[1]) / d1[1])
+            elif d2[0] != 0:  # p1 and p2 are same -> swap p1,p2 with p3,p4
+                t1 = (float(p1[0] - p3[0]) / d2[0])
+                t2 = (float(p2[0] - p3[0]) / d2[0])
+            elif d2[1] != 0:
+                t1 = (float(p1[1] - p3[1]) / d2[1])
+                t2 = (float(p2[1] - p3[1]) / d2[1])
+            else:  # p1 and p2 are same AND p3 and P4 are same: return p1 if they are all same
+                if p1 == p3:
+                    return p1
+        else:  # parallel lines do not intersect
+            return ()
+        # either one of them is in limit[0..1] or they are on different sides..
+        if min(t1, t2) <= 1.0 and max(t1, t2) >= 0.0:
+            t1n = max(min(t1, t2), 0.0)
+            t2n = min(max(t1, t2), 1.0)
+            retval = ((p1[0] + t1n * d1[0], p1[1] + t1n * d1[1]),
+                      (p1[0] + t2n * d1[0], p1[1] + t2n * d1[1]))
+            if retval[0] == retval[1]:
+                retval = retval[0]
+    else:
+        t1 = float(d2[0] * (p1[1] - p3[1]) - d2[1] * (p1[0] - p3[0])) / det
+        t2 = float(d1[0] * (p1[1] - p3[1]) - d1[1] * (p1[0] - p3[0])) / det
+        if strict:
+            if 0.0 <= t1 < 1.0 and 0.0 <= t2 < 1.0:  # point has to be on line segment
+                retval = (p3[0] + t2 * d2[0], p3[1] + t2 * d2[1])
+        else:
+            if 0.0 <= t1 <= 1.0 and 0.0 <= t2 <= 1.0:  # point has to be on line segment
+                retval = (p3[0] + t2 * d2[0], p3[1] + t2 * d2[1])
+    return retval
+
+
 def draw_list(p_list, arg_color, closed=True):
     upper_limit = len(p_list)
     if not closed:
@@ -119,6 +235,123 @@ def draw_list(p_list, arg_color, closed=True):
     for index in range(0, upper_limit):
         hal_draw_line(p_list[index],
                       p_list[(index + 1) % len(p_list)], arg_color)
+
+
+def is_inside(polygon, candidate, outside_point=(), strict=True):
+    """
+    will determine, if a given candidate point is inside the polygon
+    parameters:
+        polygon (list of two dimensional points)
+        candidate a 2D-Point which is in question to be in or outside of the poly
+        outside_point a point guaranteed to be on the outside, if not given,
+                     method will calculate one(slower)
+        strict controls, if boundary lines belong to the polygon (False) or not (True)
+    returns True, if candidate is inside polygon
+            False, if candidate is outside of polygon
+    """
+    on_line = False
+    for index in range(0, len(polygon)):
+        vertex1 = polygon[index]
+        vertex2 = polygon[(index + 1) % len(polygon)]
+        intersect = intersect_line(vertex1, vertex2,  # TODO: use Point-line intersection, not line-line..
+                                   candidate, candidate, strict=True)
+        if len(intersect) > 0:  # intersection was found
+            on_line = True
+    if on_line:
+        return not strict
+    if len(outside_point) != 2:  # if outside_point is not given, create one
+        max_x = max_y = min_x = min_y = 0  # calc polys bounding box
+        for vertex in polygon:
+            if vertex[0] > max_x:
+                max_x = vertex[0]
+            if vertex[0] < min_x:
+                min_x = vertex[0]
+            if vertex[1] > max_y:
+                max_y = vertex[0]
+            if vertex[1] < min_y:
+                min_y = vertex[0]
+        delta = (max_x - min_x, max_y - min_y)  # diagonal of bounding box
+        outside_point = (max_x + delta[0], max_y + delta[1])  # move outside
+    intersection_count = 0
+    for index in range(0, len(polygon)):
+        vertex1 = polygon[index]
+        vertex2 = polygon[(index + 1) % len(polygon)]
+        intersect = intersect_line(vertex1, vertex2,
+                                   outside_point, candidate, strict=True)
+        if len(intersect) > 0:  # intersection was found
+            if isinstance(intersect[0], float):
+                # if type(intersect[0]) == type(float(0)):
+                intersection_count += 1
+    return (intersection_count % 2) == 1
+
+
+def find_intersect_index(arg_poly, point, candidates=None, close=True):
+    """
+    find the line segment on which a given point resides
+    :param arg_poly: the list of points forming the (counter-circular) axis aligned polygon
+    :param point: the point which should be searched
+    :param candidates: a part of poly array to avoid traversing all segments
+    :param close:  True, if the polygon is closed(like playfield)or
+                   False if the polygon is open (like path)
+    :return:  the indexes into arg_poly (multiple entries if point is on a vertex)
+    """
+    retval = []
+    upper_limit = len(arg_poly)
+    if not close:
+        upper_limit -= 1
+    if candidates is None:
+        candidates = range(0, upper_limit)
+    for index_src in candidates:
+        index_dst = (index_src + 1) % len(arg_poly)
+        xl = min(arg_poly[index_src][0], arg_poly[index_dst][0])
+        xh = max(arg_poly[index_src][0], arg_poly[index_dst][0])
+        yl = min(arg_poly[index_src][1], arg_poly[index_dst][1])
+        yh = max(arg_poly[index_src][1], arg_poly[index_dst][1])
+        if xl <= (point[0]) <= xh and yl <= (point[1]) <= yh:
+            retval.append(index_src)
+    return retval
+
+
+def get_first_collision(collision, ignore_pt=(-1, -1)):
+    """examines a collision result and returns either the ignore_pt, if collision only happened in
+    ignore_pt or the other point of the collision"""
+    candidate = ignore_pt  # reset candidate to default value and check the collision
+    for collide in collision:
+        if type(collide[0]) == tuple:  # result is a line-> take vertex which is not ignore_point
+            for vertex in collide:
+                if not vector_equal(vertex, ignore_pt):
+                    candidate = vertex
+                    break
+        elif type(collide[0]) == float:  # result is a single point; only valid, if not ignore_point
+            if not vector_equal(collide, ignore_pt):
+                candidate = collide
+                break
+    return candidate
+
+
+def check_line_vs_poly(p1, p2, poly_path, close=True, sort=True):
+    """collides a line with a polygon
+    returns a list of points or lines(collinear) with collisions"""
+    retval = []
+    for p3, p4 in pairwise(poly_path):  # check each line segment
+        res = intersect_line(p1, p2, p3, p4)
+        if len(res) > 0:
+            retval.append(res)
+    if close:
+        res = intersect_line(p1, p2, poly_path[-1], poly_path[0])  # don't forget the closing line..
+        if len(res) > 0:
+            retval.append(res)
+
+    def local_distance(px):
+        if type(px[0]) == tuple:
+            dist = distance_point_line(p1, px[0], px[1], False)
+        else:
+            dist = (px[0] - p1[0]) ** 2 + (px[1] - p1[1]) ** 2
+        return dist
+
+    if sort:
+        retval.sort(key=local_distance)
+    return retval
 
 
 def paint_score():
@@ -166,6 +399,52 @@ def paint_game():
     paint_player()
 
 
+def move_player(movement):
+    if [0, 0] == movement:
+        return player_coords[current_player]
+    # get all lines our player stands on..(max. 2, if player stays on corner)
+    possible_move = []
+    possible_move = find_intersect_index(playfield[current_player], player_coords[current_player])
+    candidate = list(player_coords[current_player])
+    candidate = vector_add(candidate, movement)
+
+    if len(possible_move) > 0:  # Player is standing on grid
+        new_result = find_intersect_index(playfield[current_player], candidate)
+        if len(list(set(possible_move) & set(new_result))) == 0:
+            # we are leaving the segment, either by overshooting ... or starting a new line
+            # go single pixel into direction of candidate
+            short_candidate = list(player_coords[current_player])
+            if movement[0] != 0:
+                short_candidate[0] += math.copysign(1, movement[0])
+            if movement[1] != 0:
+                short_candidate[1] += math.copysign(1, movement[1])
+            if is_inside(playfield[current_player], short_candidate, strict=True):
+                candidate = player_coords[current_player]
+            else:  # just overshooting..clip it to last corner point
+                # intersecting movement with playfield
+                tmp = [playfield[current_player][possible_move[0] - 1]]
+                for mv in possible_move:
+                    tmp.append(playfield[current_player][mv])
+                tmp.append(playfield[current_player][(possible_move[-1] + 1) % len(playfield[current_player])])
+                collision = check_line_vs_poly(player_coords[current_player], candidate, tmp, close=False)
+                candidate = get_first_collision(collision, ignore_pt=player_coords[current_player])
+    return candidate
+
+
+def handle_movement():
+    movement = [0, 0]
+    if left:
+        movement[0] -= 1
+    if right:
+        movement[0] += 1
+    if up:
+        movement[1] -= 1
+    if down:
+        movement[1] += 1
+    if player_lives[current_player] > 0:
+        player_coords[current_player] = move_player(movement)
+
+
 def reset_playfield(index_player):
     global playfield
     playfield[index_player] = new_playfield
@@ -190,6 +469,41 @@ def init():
     player_coords = [player_start, player_start]
 
 
+def press_key(key):
+    global pressed_keys, left, right, up, down
+    if key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN]:
+        pressed_keys.append(key)
+    if key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN]:
+        left = right = up = down = False
+    if key == pygame.K_LEFT and pygame.K_RIGHT not in pressed_keys:
+        left = True
+    if key == pygame.K_RIGHT and pygame.K_LEFT not in pressed_keys:
+        right = True
+    if key == pygame.K_UP and pygame.K_DOWN not in pressed_keys:
+        up = True
+    if key == pygame.K_DOWN and pygame.K_UP not in pressed_keys:
+        down = True
+
+
+def release_key(key):
+    global pressed_keys, left, right, up, down
+    if key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN]:
+        pressed_keys.remove(key)
+    status = False
+    if len(pressed_keys) > 0:
+        status = True
+        key = pressed_keys[-1]
+    left = right = up = down = False
+    if key == pygame.K_LEFT and pygame.K_RIGHT not in pressed_keys:
+        left = status
+    if key == pygame.K_RIGHT and pygame.K_LEFT not in pressed_keys:
+        right = status
+    if key == pygame.K_UP and pygame.K_DOWN not in pressed_keys:
+        up = status
+    if key == pygame.K_DOWN and pygame.K_UP not in pressed_keys:
+        down = status
+
+
 def gameloop():  # https://dewitters.com/dewitters-gameloop/
     global frame_counter
     next_game_tick = get_real_time() - 1
@@ -199,6 +513,11 @@ def gameloop():  # https://dewitters.com/dewitters-gameloop/
             for event in pygame.event.get():
                 if event.type == QUIT:
                     return
+                if event.type == KEYDOWN:
+                    press_key(event.key)
+                if event.type == KEYUP:
+                    release_key(event.key)
+            handle_movement()
             frame_counter += 1
             next_game_tick += SKIP_TICKS
             if get_real_time() > next_game_tick + MAX_TIMESKIP:
@@ -217,5 +536,8 @@ if __name__ == '__main__':
     print("(c) 2021 YogaSurfTech https://github.com/YogaSurfTech/pyqix")
     print("A faithful remake of the Taito classic arcade game QIX in Python. ")
     print("On the occasion of the 40th anniversary of the release at 18th. October 2021")
+    print("Controls:")
+    print("The standard MAME keyset is used:")
+    print("Cursor keys are Joystick")
     init()
     gameloop()
