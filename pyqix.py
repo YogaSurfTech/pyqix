@@ -52,6 +52,8 @@ current_player = 0
 max_player = 2
 # ------- per player --------
 playfield = [[], []]  # the array of vertex, holding the borders of the game
+old_polys = [[], []]
+old_poly_colors = [[], []]
 player_coords = [[], []]  # an  x/y coordinate
 player_lives = [0, 0]  # num lives of both players
 scores = [0, 0]
@@ -85,6 +87,12 @@ def hal_load_image(fullname, color_key=None):
             color_key = image.get_at((0, 0))
         image.set_colorkey(color_key, RLEACCEL)
     return image, image.get_rect()
+
+
+def hal_fill_poly(point_list, arg_color):
+    if len(point_list) > 2:
+        transformed = [(pnt[0] * X_SCALE, pnt[1] * Y_SCALE) for pnt in point_list]
+        pygame.draw.polygon(screen, arg_color, transformed)
 
 
 def hal_draw_line(point_1, point_2, arg_color):
@@ -251,6 +259,32 @@ def draw_list(p_list, arg_color, closed=True):
                       p_list[(index + 1) % len(p_list)], arg_color)
 
 
+def remove_double_vertex(polygon):
+    """
+    will remove all double vertexes in a polygon list TODO use faster ALGO
+    to avoid problems in intersect_line, if no line, but the same point
+    is given double points will always arise if you start a new path on a corner
+    """
+    removals = []
+    old_v = (-1, -1)
+    for index in range(len(polygon) - 1, 0, -1):
+        if polygon[index][0] == old_v[0] and polygon[index][1] == old_v[1]:
+            removals.append(index)
+        old_v = polygon[index]
+    for index in removals:
+        del polygon[index]
+    return polygon
+
+
+def calc_area(polygon):
+    retval = 0
+    for index in range(0, len(polygon)):
+        v1 = polygon[index]
+        v2 = polygon[(index + 1) % len(polygon)]
+        retval += (v1[0] * v2[1] - v1[1] * v2[0])
+    return retval / 2.0
+
+
 def is_inside(polygon, candidate, outside_point=(), strict=True):
     """
     will determine, if a given candidate point is inside the polygon
@@ -324,6 +358,51 @@ def find_intersect_index(arg_poly, point, candidates=None, close=True):
         if xl <= (point[0]) <= xh and yl <= (point[1]) <= yh:
             retval.append(index_src)
     return retval
+
+
+def split_polygon(arg_poly, path):
+    """
+     this is one of the heart routines of qix, the splitPolygon method,
+     which will be called if a new polygon must be drawn. It returns 2 Polygons:
+        the one which should be filled
+        the other one which is the new free space(with the qix in it..)
+    """
+    poly1 = []
+    poly2 = []
+    # 1st: get line from poly of start point
+    start_index = find_intersect_index(arg_poly, path[0])[0]
+    # 2nd: get line from poly from end point
+    end_index = find_intersect_index(arg_poly, path[-1])[0]
+    # construct 2 new polys by splitting the poly on start and end edges and
+    # inserting the path in both polys
+    if start_index > end_index:
+        start_index, end_index = end_index, start_index
+        path.reverse()
+    # check path orientation by scalar product(?) if starts on same segment
+    if start_index == end_index:
+        dx_path = path[-1][0] - path[0][0]
+        dy_path = path[-1][1] - path[0][1]
+        dx_poly = arg_poly[(start_index + 1) % len(arg_poly)][0] - arg_poly[start_index][0]
+        dy_poly = arg_poly[(start_index + 1) % len(arg_poly)][1] - arg_poly[start_index][1]
+        if dx_path * dx_poly + dy_path * dy_poly < 0:
+            start_index, end_index = end_index, start_index
+            path.reverse()
+    seg1 = arg_poly[0:start_index + 1]
+    seg2 = arg_poly[start_index + 1:end_index + 1]
+    seg3 = arg_poly[end_index + 1:]
+
+    path1 = list(path)
+    poly1.extend(seg1)
+    poly1.extend(path1)
+    poly1.extend(seg3)
+
+    path2 = list(path)
+    path2.reverse()
+    poly2.extend(path2)
+    poly2.extend(seg2)
+    poly1 = remove_double_vertex(poly1)
+    poly2 = remove_double_vertex(poly2)
+    return poly1, poly2
 
 
 def get_first_collision(collision, ignore_pt=(-1, -1)):
@@ -409,6 +488,10 @@ def paint_player():
 
 
 def paint_playfield():
+    for idx, iter_poly in enumerate(old_polys[current_player]):
+        hal_fill_poly(iter_poly, old_poly_colors[current_player][idx])
+    for iter_poly in old_polys[current_player]:
+        draw_list(iter_poly, color[WHITE])
     draw_list(playfield[current_player], color[WHITE])
 
 
@@ -422,7 +505,7 @@ def paint_game():
 
 
 def move_player(movement):
-    global move_mode, players_path, half_frame_rate
+    global move_mode, players_path, half_frame_rate, old_polys, old_poly_colors, scores, playfield
     half_frame_rate = False
     if [0, 0] == movement:
         return player_coords[current_player]
@@ -455,8 +538,6 @@ def move_player(movement):
                 move_mode[1] = MM_SPEED_FAST
                 if fire_slow:
                     move_mode[1] = MM_SPEED_SLOW
-                # todo: check that  player_path and candidate do not overlap with playfield partially
-                #       (will trigger empty polygon fill)
                 collision = check_line_vs_poly(player_coords[current_player], short_candidate,
                                                playfield[current_player], close=True, sort=False)
                 start_point = get_first_collision(collision, ignore_pt=player_coords[current_player])
@@ -500,11 +581,31 @@ def move_player(movement):
             candidate_tmp = get_first_collision(collision, ignore_pt=player_coords[current_player])
             if not vector_equal(candidate_tmp, player_coords[current_player]) and \
                     not vector_equal(candidate_tmp, players_path[0]):
-                players_path.pop()  # player touches playfield => split field and end free_mode
+                players_path.pop()
                 players_path.append((candidate_tmp[0], candidate_tmp[1]))
-                players_path = [(int(x[0]), int(x[1])) for x in players_path]  # conv playerpath to int (fill algo)
+                players_path = [(int(x[0]), int(x[1])) for x in players_path]
                 candidate = players_path[-1]
-
+                # 1st: split playfield
+                poly1, poly2 = split_polygon(playfield[current_player], list(players_path))
+                old_playfield_area = abs(calc_area(playfield[current_player]))
+                # 2nd: check which poly is new playfield(the one with the qix inside)
+                playfield[current_player] = poly1
+                old_polys[current_player].append(poly2)
+                # 3rd: calc points, add color and handle supersparx on path
+                i = CYAN
+                slow_factor = 1
+                if move_mode[1] == MM_SPEED_SLOW:
+                    i = DARKRED
+                    slow_factor = 2
+                playfield_area = abs(calc_area(playfield[current_player]))
+                complete = abs(calc_area(new_playfield))
+                old_percentage = old_playfield_area * 100 / complete
+                new_percentage = playfield_area * 100 / complete
+                bonus = int((old_percentage - new_percentage) * 100) * slow_factor
+                scores[current_player] += bonus
+                old_poly_colors[current_player].append(color[i])
+                players_path = []
+                move_mode = [MM_GRID, None]
         else:  # in roaming mode only move if fast or slow button is pressed
             candidate = list(player_coords[current_player])
         # we are not allowing moving outside the playfield
