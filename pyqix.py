@@ -3,6 +3,7 @@ import os
 import pygame
 from pygame.locals import *
 import math
+import random
 import itertools
 
 WIDTH = 1024
@@ -64,6 +65,10 @@ player_start = [128, 239]
 half_frame_rate = False
 pressed_keys = []  # sequence of pressed keys and current state
 new_playfield = [(16, 39), (16, 239), (240, 239), (240, 39)]
+fuse_sleep = 1000  # time of players wait until fuse starts chasing the player in ms
+fuse = [0, 0, 0, False]  # fuse hunts player, if he draws a line and stops[x,y,sleep_counter,visible]
+sprt_fuse = []  # the array of the fuse sprites
+
 start_player_lives = 3
 move_mode = []  # holds state and sub_state(for movement) of the general game
 live_coord = (234, 14)
@@ -422,6 +427,49 @@ def get_first_collision(collision, ignore_pt=(-1, -1)):
     return candidate
 
 
+def calc_vertex_from_1d_path(poly_path, start_vertex, offset, close=True):
+    """returns the dot according to (circular) 1d path + offset
+       DONE: on overshooting after the end path is considered circular
+        :param poly_path the polygon or path in question
+        :param start_vertex vertex on poly_path to start
+        :param offset distance to new vertex
+        :param close poly_path is either circular(True) or a polyline(False)
+    """
+    retval = list(start_vertex)
+    index = find_intersect_index(poly_path, start_vertex, close=close)
+    if len(index):
+        direction = int(math.copysign(1, offset))
+        index = index[-1]
+        p1 = start_vertex
+        if offset < 0:
+            index = (index + 1) % len(poly_path)
+            offset = - offset
+        while offset > 0:
+            index2 = (index + direction) % len(poly_path)  # this wraps around even if close = false!
+            p2 = poly_path[index2]
+            dx, dy = vector_sub(p2, p1)
+            subtract = (abs(dx)) + (abs(dy))
+            if subtract < offset:       # segments length smaller than offset ?
+                offset -= subtract      # subtract and continue on next segment
+                index = index2
+                p1 = poly_path[index]
+                if not close and index2 == len(poly_path)-1:  # not closed and reached last line segment ?
+                    retval[0] = p2[0]             # CLAMP the value to last vertex
+                    retval[1] = p2[1]
+                    offset = 0                    # exit while loop
+            else:
+                fx = min(dx, 1)
+                if dx < 0:
+                    fx = -1
+                fy = min(dy, 1)
+                if dy < 0:
+                    fy = -1
+                retval[0] = p1[0] + (offset * fx)
+                retval[1] = p1[1] + (offset * fy)
+                offset = 0              # exit while loop
+    return retval
+
+
 def check_line_vs_poly(p1, p2, poly_path, close=True, sort=True):
     """collides a line with a polygon
     returns a list of points or lines(collinear) with collisions"""
@@ -460,7 +508,18 @@ def paint_playerpath():
     idx = DARKRED  # paint playerpath
     if move_mode[1] == MM_SPEED_FAST:
         idx = CYAN
-    draw_list(players_path, color[idx], False)
+    fuse_segment = find_intersect_index(players_path, fuse[:2], close=False)
+    if len(fuse_segment) > 0:
+        fuse_segment = fuse_segment[0] + 1
+    else:
+        fuse_segment = 0
+    draw_list(players_path[:fuse_segment], color[DARKGREY], False)
+    draw_list(players_path[fuse_segment:], color[idx], False)
+    if fuse_segment < len(players_path):
+        hal_draw_line(players_path[fuse_segment - 1], fuse[:2], color[DARKGREY])
+        hal_draw_line(fuse[:2], players_path[fuse_segment], color[idx])
+    if fuse[3]:  # paint fuse
+        show_sprite(sprt_fuse, fuse[:2])
 
 
 def paint_claimed_and_lives():
@@ -504,8 +563,26 @@ def paint_game():
     paint_player()
 
 
+def show_sprite(img_stack, position):
+    index = int(random.random() * len(img_stack))
+    pos = (position[0] - img_stack[index].get_width() / 2 / X_SCALE,
+           position[1] - img_stack[index].get_height() / 2 / Y_SCALE)
+    hal_blt(img_stack[index], pos)
+
+
+def move_fuse():
+    if move_mode[0] != MM_GRID:  # handle fuse movement
+        if fuse[2] > fuse_sleep:  # TODO: add up time player is waiting on path
+            fuse[3] = True
+            fuse[0:2] = calc_vertex_from_1d_path(players_path, fuse[0:2], 1, close=False)
+            if vector_equal(fuse[0:2], player_coords[current_player]):  # DONE: fuse catches player!
+                fuse[0:2] = players_path[0]
+        else:
+            fuse[2] += SKIP_TICKS
+
+
 def move_player(movement):
-    global move_mode, players_path, half_frame_rate, old_polys, old_poly_colors, scores, playfield
+    global move_mode, players_path, half_frame_rate, old_polys, old_poly_colors, scores, playfield, fuse
     half_frame_rate = False
     if [0, 0] == movement:
         return player_coords[current_player]
@@ -542,6 +619,7 @@ def move_player(movement):
                                                playfield[current_player], close=True, sort=False)
                 start_point = get_first_collision(collision, ignore_pt=player_coords[current_player])
                 players_path = [start_point, start_point]
+                fuse = [players_path[0][0], players_path[0][1], 0, False]  # init fuse to hunt player
                 possible_move = []  # allows to jump into next outer if for free roaming
             else:  # just overshooting..clip it to last corner point
                 # intersecting movement with playfield
@@ -554,6 +632,7 @@ def move_player(movement):
 
     if len(possible_move) == 0:  # Player is roaming a new line
         if fire_slow or fire_fast:
+            fuse[3] = False
             old_movemode = move_mode[0]
             if movement[0] != 0:
                 move_mode[0] = MM_HORIZONTAL
@@ -585,6 +664,7 @@ def move_player(movement):
                 players_path.append((candidate_tmp[0], candidate_tmp[1]))
                 players_path = [(int(x[0]), int(x[1])) for x in players_path]
                 candidate = players_path[-1]
+                fuse[:2] = players_path[0]
                 # 1st: split playfield
                 poly1, poly2 = split_polygon(playfield[current_player], list(players_path))
                 old_playfield_area = abs(calc_area(playfield[current_player]))
@@ -628,7 +708,11 @@ def handle_movement():
     if down:
         movement[1] += 1
     if player_lives[current_player] > 0:
-        player_coords[current_player] = move_player(movement)
+        candidate = move_player(movement)
+        if move_mode[0] == MM_VERTICAL or move_mode[0] == MM_HORIZONTAL:
+            if candidate == player_coords[current_player] and not half_frame_rate:
+                move_fuse()
+        player_coords[current_player] = candidate
 
 
 def reset_playfield(index_player):
@@ -637,7 +721,8 @@ def reset_playfield(index_player):
 
 
 def init():
-    global window_surface, screen, logo, fonts, active_live, inactive_live, player_lives, player_coords, move_mode
+    global window_surface, screen, logo, fonts, active_live, inactive_live, player_lives, player_coords, move_mode,\
+        fuse, sprt_fuse
     pygame.init()
     window_surface = pygame.display.set_mode([WINDOW_WIDTH, WINDOW_HEIGHT])
     screen = pygame.Surface((WIDTH, HEIGHT))
@@ -650,10 +735,16 @@ def init():
     active_live = pygame.transform.scale(active_live, (int(3.0 * X_SCALE), int(3.0 * Y_SCALE)))
     inactive_live, _ = hal_load_image(os.path.join('data', 'qix_live_r.png'))
     inactive_live = pygame.transform.scale(inactive_live,  (int(3.0 * X_SCALE), int(3.0 * Y_SCALE)))
+    for index in range(8):
+        tmp, size = hal_load_image(os.path.join('data', 'fuse', 'fuse_%d.png' % (index + 1)))
+        tmp = pygame.transform.scale(tmp, (max(int(size[2] * X_SCALE), 1), max(int(size[3] * Y_SCALE), 1)))
+        tmp.set_colorkey(Color(0))
+        sprt_fuse.append(tmp)
     reset_playfield(0)
     player_lives = [start_player_lives, start_player_lives]
     player_coords = [player_start, player_start]
     move_mode = [MM_GRID, MM_SPEED_SLOW]
+    fuse = [0, 0, 0, False]  # fuse hunts player, if he draws a line and stops[x,y,sleep_timer,visible]
 
 
 def press_key(key):
