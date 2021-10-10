@@ -67,6 +67,9 @@ new_playfield = [(16, 39), (16, 239), (240, 239), (240, 39)]
 fuse_sleep = 1000  # time of players wait until fuse starts chasing the player in ms
 fuse = [0, 0, 0, False]  # fuse hunts player, if he draws a line and stops[x,y,sleep_counter,visible]
 sprt_fuse = []  # the array of the fuse sprites
+sparx_respawn = 0  # counts up 37 seconds until next pair of spark is respawned
+sparx_super_spawn = 1  # number of sparx spawned until they mutate to supersparx
+sparx_super_counter = sparx_super_spawn  # counts down how many sparx are spawned until they mutate to supersparx
 all_sparx = []  # sparx:x, y, speed, supersparx(=1, normal=0), IsIOnPlayerPath, PointToStopFlip, PolyToWanderFlip
 sprt_sparx = []
 sprt_supersparx = []
@@ -118,6 +121,11 @@ def hal_draw_line(point_1, point_2, arg_color):
 def get_real_time():
     """ Real time of the system in ms after pygame.init"""
     return pygame.time.get_ticks()
+
+
+def get_time():
+    """in-game time calculated calculated by 1/60th sec tics as updates in game logic"""
+    return frame_counter * SKIP_TICKS
 
 
 def hal_draw_rect(point_1, point_2, arg_color):
@@ -552,13 +560,32 @@ def check_line_vs_poly(p1, p2, poly_path, close=True, sort=True):
 
 
 def reset_sparx(index_player, player_pos=None):
-    global all_sparx
+    global all_sparx, sparx_respawn, sparx_super_counter
     if player_pos is None:
         player_pos = player_coords[index_player]
+    sparx_respawn = 0
+    sparx_super_counter = sparx_super_spawn
     x1, y1 = calc_vertex_from_1d_path(playfield[index_player], player_pos,
                                       int(calc_1d_path(playfield[index_player]) / 2))
-    all_sparx = [[x1, y1, -1, 1, False, [], []],
-                 [x1, y1,  1, 1, False, [], []]]
+    all_sparx = [[x1, y1, -1, 0, False, [], []],
+                 [x1, y1,  1, 0, False, [], []]]
+
+
+def tick_sparc_respawn():
+    global all_sparx, sparx_respawn, sparx_super_counter, all_sparx
+    sparx_respawn += 1
+    if sparx_respawn > 37:
+        sparx_respawn = 0
+        sparx_super_counter -= 1
+        tmp_playfield = new_playfield
+        coords = ((tmp_playfield[0][0] + tmp_playfield[2][0]) / 2, tmp_playfield[0][1])
+        spark_left = [coords[0], coords[1], all_sparx[-2][2], 0, False, [], []]
+        spark_right = [coords[0], coords[1], all_sparx[-1][2], 0, False, [], []]
+        all_sparx.append(spark_left)
+        all_sparx.append(spark_right)
+        if sparx_super_counter < 0:  # this will be repeated until player dies or level is completed
+            for sparc in all_sparx:
+                sparc[3] = 1
 
 
 def calc_max_exploding_line_steps():
@@ -605,6 +632,10 @@ def paint_score():
         dim = print_at(str(scores[index]), (0, 0), color[WHITE], center_flags=NO_BLIT, use_font=FONT_SCORE)
         coords = (232 - dim[0] / X_SCALE, 16 + index * 11)
         print_at(str(scores[index]), coords, color[WHITE], use_font=FONT_SCORE)
+        xco1 = min((17.0 + 3 * sparx_respawn), GAME_WIDTH/2)
+        xco2 = max((238.0 - 3 * sparx_respawn), GAME_WIDTH/2)
+        if xco1 < xco2:
+            hal_draw_rect((xco1, 37), (xco2, 38), color[MIDRED])
 
 
 def paint_sparx():
@@ -1022,6 +1053,7 @@ def release_key(key):
 def gameloop():  # https://dewitters.com/dewitters-gameloop/
     global frame_counter
     next_game_tick = get_real_time() - 1
+    one_sec_tick = get_time() + 1000
     while 1:
         loops = 0
         while get_real_time() > next_game_tick and loops < MAX_FRAMESKIP:
@@ -1034,6 +1066,10 @@ def gameloop():  # https://dewitters.com/dewitters-gameloop/
                     release_key(event.key)
             handle_movement()
             frame_counter += 1
+            if get_time() - one_sec_tick > 0:
+                if not is_dead and player_lives[current_player] > 0:
+                    tick_sparc_respawn()
+                one_sec_tick = get_time() + 1000
             next_game_tick += SKIP_TICKS
             if get_real_time() > next_game_tick + MAX_TIMESKIP:
                 next_game_tick = get_real_time() + SKIP_TICKS
