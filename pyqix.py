@@ -372,6 +372,41 @@ def find_intersect_index(arg_poly, point, candidates=None, close=True):
     return retval
 
 
+def cut_path(arg_poly, arg_start, arg_end, direction=1):
+    """returns shortest path from start to end laying on arg poly
+    Condition: start and end are on poly
+    :param arg_poly: the list of points forming the axis aligned polygon
+    :param arg_start: start point of the new path
+    :param arg_end:   end point of the new path
+    :param direction:   direction how to count through the poly (value will be clamped to +1/-1)
+    :return:  list of points forming the axis aligned path starting with point start and ending with point end
+    """
+    retval = []
+    start_index = find_intersect_index(arg_poly, arg_start, close=True)
+    end_index = find_intersect_index(arg_poly, arg_end, close=True)
+    swapped = False
+    if len(start_index) > 0 and len(end_index) > 0:
+        start_index = start_index[0]
+        end_index = end_index[0]
+        if direction >= 0:
+            direction = 1
+            while end_index < start_index:
+                end_index += len(arg_poly)
+            start_index += 1
+            end_index += 1
+        if direction < 0:
+            direction = -1
+            while end_index > start_index:
+                end_index -= len(arg_poly)
+        retval.append(arg_start)
+        for index in range(start_index, end_index, direction):
+            retval.append(arg_poly[index % len(arg_poly)])
+        retval.append(arg_end)
+        if swapped:
+            retval.reverse()
+    return retval
+
+
 def split_polygon(arg_poly, path):
     """
      this is one of the heart routines of qix, the splitPolygon method,
@@ -651,6 +686,7 @@ def revive_player():
         player_lives[current_player] -= 1
         reset_player_pos()
         dead_count_dir = -1
+        reset_sparx(current_player)
 
 
 def reset_player_pos():
@@ -677,6 +713,21 @@ def move_fuse():
                 kill_player()
         else:
             fuse[2] += SKIP_TICKS
+
+
+def move_sparx():
+    for sparc in all_sparx:  # handle sparx movement
+        old_val = sparc[0:2]
+        search_polys = [playfield[current_player]]
+        search_polys.extend(old_polys[current_player][::-1])
+        for single_poly in search_polys:
+            sparc[0:2] = calc_vertex_from_1d_path(single_poly, sparc[0:2], sparc[2], close=True)
+            if old_val != sparc[0:2]:
+                delta_path = cut_path(single_poly, old_val, sparc[0:2], sparc[2])
+                collision_with_player = find_intersect_index(delta_path, player_coords[current_player], close=False)
+                if len(collision_with_player) != 0:
+                    kill_player()
+                break
 
 
 def move_player(movement):
@@ -817,6 +868,7 @@ def handle_movement():
                 if candidate == player_coords[current_player] and not half_frame_rate:
                     move_fuse()
             player_coords[current_player] = candidate
+            move_sparx()
 
 
 def reset_playfield(index_player):
