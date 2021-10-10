@@ -69,6 +69,7 @@ fuse = [0, 0, 0, False]  # fuse hunts player, if he draws a line and stops[x,y,s
 sprt_fuse = []  # the array of the fuse sprites
 all_sparx = []  # sparx:x, y, speed, supersparx(=1, normal=0), IsIOnPlayerPath, PointToStopFlip, PolyToWanderFlip
 sprt_sparx = []
+sprt_supersparx = []
 pressed_keys = []  # sequence of pressed keys and current state
 dead_counter = 0
 dead_count_dir = 1  # direction of dead anim
@@ -79,6 +80,7 @@ deathray_prolong = .5  # how many pixels every line grows after each step
 start_player_lives = 3
 move_mode = []  # holds state and sub_state(for movement) of the general game
 live_coord = (234, 14)
+split_poly = None
 highscore = [(30000, "QIX") for i in range(10)]
 fire_slow = fire_fast = up = down = left = right = False
 
@@ -555,8 +557,8 @@ def reset_sparx(index_player, player_pos=None):
         player_pos = player_coords[index_player]
     x1, y1 = calc_vertex_from_1d_path(playfield[index_player], player_pos,
                                       int(calc_1d_path(playfield[index_player]) / 2))
-    all_sparx = [[x1, y1, -1, 0, False, [], []],
-                 [x1, y1,  1, 0, False, [], []]]
+    all_sparx = [[x1, y1, -1, 1, False, [], []],
+                 [x1, y1,  1, 1, False, [], []]]
 
 
 def calc_max_exploding_line_steps():
@@ -607,7 +609,10 @@ def paint_score():
 
 def paint_sparx():
     for sparc in all_sparx:
-        show_sprite(sprt_sparx, sparc[:2])
+        sprites = sprt_sparx
+        if sparc[3]:
+            sprites = sprt_supersparx
+        show_sprite(sprites, sparc[:2])
 
 
 def paint_playerpath():
@@ -717,21 +722,33 @@ def move_fuse():
 
 def move_sparx():
     for sparc in all_sparx:  # handle sparx movement
-        old_val = sparc[0:2]
-        search_polys = [playfield[current_player]]
-        search_polys.extend(old_polys[current_player][::-1])
-        for single_poly in search_polys:
-            sparc[0:2] = calc_vertex_from_1d_path(single_poly, sparc[0:2], sparc[2], close=True)
-            if old_val != sparc[0:2]:
-                delta_path = cut_path(single_poly, old_val, sparc[0:2], sparc[2])
-                collision_with_player = find_intersect_index(delta_path, player_coords[current_player], close=False)
-                if len(collision_with_player) != 0:
-                    kill_player()
-                break
+        if sparc[4]:  # supersparc has found players path before so it follows it
+            sparc[0:2] = calc_vertex_from_1d_path(players_path, sparc[0:2], abs(sparc[2]), close=False)
+            if sparc[0:2] == player_coords[current_player]:  # supersparx catches player!
+                kill_player()
+                sparc[0:2] = players_path[0]  # for debug mode reset to path start
+        else:
+            old_val = sparc[0:2]
+            if len(sparc[5]) == 0:  # supersparc speed was flipped and is now in between old polys to find a way out
+                search_polys = [playfield[current_player]]
+                search_polys.extend(old_polys[current_player][::-1])
+            else:
+                search_polys = [sparc[6]]
+            for single_poly in search_polys:
+                sparc[0:2] = calc_vertex_from_1d_path(single_poly, sparc[0:2], sparc[2], close=True)
+                if old_val != sparc[0:2]:
+                    delta_path = cut_path(single_poly, old_val, sparc[0:2], sparc[2])
+                    collision_with_player = find_intersect_index(delta_path, player_coords[current_player], close=False)
+                    if len(collision_with_player) != 0:
+                        kill_player()
+                    resume_supersparx_normal(delta_path, sparc)
+                    check_playerpath_supersparx(old_val, sparc)
+                    break
 
 
 def move_player(movement):
-    global move_mode, players_path, half_frame_rate, old_polys, old_poly_colors, scores, playfield, fuse
+    global move_mode, players_path, half_frame_rate, old_polys, old_poly_colors, scores, playfield, fuse, \
+        split_poly
     half_frame_rate = False
     if [0, 0] == movement:
         return player_coords[current_player]
@@ -778,6 +795,17 @@ def move_player(movement):
                 tmp.append(playfield[current_player][(possible_move[-1] + 1) % len(playfield[current_player])])
                 collision = check_line_vs_poly(player_coords[current_player], candidate, tmp, close=False)
                 candidate = get_first_collision(collision, ignore_pt=player_coords[current_player])
+        if move_mode[0] == MM_GRID:  # Check if a sparc is located between old_pos and current_pos
+            delta_path_ccw = cut_path(playfield[current_player], player_coords[current_player], candidate, 1)
+            delta_path_cw = cut_path(playfield[current_player], player_coords[current_player], candidate, -1)
+            delta_path = delta_path_ccw
+            if calc_1d_path(delta_path_ccw, False) > calc_1d_path(delta_path_cw, False):
+                delta_path = delta_path_cw
+            for sparc in all_sparx:
+                collision_with_player = find_intersect_index(delta_path, sparc[0:2], close=False)
+                if len(collision_with_player) != 0:
+                    kill_player()
+                    break
 
     if len(possible_move) == 0:  # Player is roaming a new line
         if fire_slow or fire_fast:
@@ -820,6 +848,7 @@ def move_player(movement):
                 # 2nd: check which poly is new playfield(the one with the qix inside)
                 playfield[current_player] = poly1
                 old_polys[current_player].append(poly2)
+                split_poly = poly2
                 # 3rd: calc points, add color and handle supersparx on path
                 i = CYAN
                 slow_factor = 1
@@ -833,6 +862,7 @@ def move_player(movement):
                 bonus = int((old_percentage - new_percentage) * 100) * slow_factor
                 scores[current_player] += bonus
                 old_poly_colors[current_player].append(color[i])
+                check_super_sparx_after_polysplit(players_path, all_sparx)
                 players_path = []
                 move_mode = [MM_GRID, None]
         else:  # in roaming mode only move if fast or slow button is pressed
@@ -841,6 +871,37 @@ def move_player(movement):
     if not is_inside(playfield[current_player], candidate, strict=False):
         candidate = player_coords[current_player]
     return candidate
+
+
+def check_playerpath_supersparx(old_val, sparc):
+    if sparc[3] == 1 and len(players_path) > 0:
+        collision_with_path = find_intersect_index([old_val, sparc[0:2]], players_path[0], close=False)
+        if len(collision_with_path) != 0:  # found players path: set up sparx to follow it
+            sparc[0:2] = players_path[0]
+            sparc[4] = True  # this is a supersparc on players path
+
+
+def check_super_sparx_after_polysplit(arg_players_path, arg_sparx):
+    for sparc in arg_sparx:  # DONE: supersparx handling on old players Path: avoid sudden flip
+        if sparc[4]:
+            sparc[4] = False  # deactivate sparx on player's-path-mode
+            poly_orientation = math.copysign(1, calc_area(arg_players_path))
+            sparx_move = math.copysign(1, sparc[2])
+            if poly_orientation != sparx_move:  # Case A or C? => Move sparx along last created poly to turn around
+                sparc[5] = arg_players_path[0]  # resetting on start point
+                sparc[6] = split_poly   # in Case C split_poly is reversed, so speed runs correctly
+            else:  # Case B or D? = resume normal mode
+                sparc[5] = []
+                sparc[6] = []
+
+
+def resume_supersparx_normal(delta_path, sparc):
+    if len(sparc[5]) != 0:  # super sparx movement: check for ending flip mode
+        flip_supersparx = find_intersect_index(delta_path, sparc[5], close=False)
+        if len(flip_supersparx) != 0:
+            sparc[4] = False
+            sparc[5] = []
+            sparc[6] = []
 
 
 def handle_movement():
@@ -878,7 +939,7 @@ def reset_playfield(index_player):
 
 def init():
     global window_surface, screen, logo, fonts, active_live, inactive_live, player_lives, player_coords, move_mode,\
-        fuse, sprt_fuse
+        fuse, sprt_fuse, sprt_sparx, sprt_supersparx
     pygame.init()
     window_surface = pygame.display.set_mode([WINDOW_WIDTH, WINDOW_HEIGHT])
     screen = pygame.Surface((WIDTH, HEIGHT))
@@ -901,6 +962,11 @@ def init():
         tmp = pygame.transform.scale(tmp, (max(int(size[2] * X_SCALE), 1), max(int(size[3] * Y_SCALE), 1)))
         tmp.set_colorkey(Color(0))
         sprt_sparx.append(tmp)
+    for index in range(16):
+        tmp, size = hal_load_image(os.path.join('data', 'super_sparx', 'super_sparx_%02d.png' % (index + 1)))
+        tmp = pygame.transform.scale(tmp, (max(int(size[2] * X_SCALE), 1), max(int(size[3] * Y_SCALE), 1)))
+        tmp.set_colorkey(Color(0))
+        sprt_supersparx.append(tmp)
 
     reset_playfield(0)
     player_lives = [start_player_lives, start_player_lives]
