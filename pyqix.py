@@ -87,6 +87,13 @@ pressed_keys = []  # sequence of pressed keys and current state
 dead_counter = 0
 dead_count_dir = 1  # direction of dead anim
 is_dead = False
+point_of_death = (0, 0)
+killed_by_qix = False
+dead_bubbles = []   # the three death bubbles: each on e has center, rad, outline, [list of black lines erasing circles]
+bubble_radius = [2, 4]
+dead_range = 16
+dead_anim_segments = 12  # death animation segments: 6 segments for showing 3 bubbles and rest for pause and resolving
+dead_anim_pause = 2  # pause between showing bubbles and resolving them
 deathray_distance = 4  # distance between diagonal lines
 no_of_deathrays = 8  # number of lines
 deathray_prolong = .5  # how many pixels every line grows after each step
@@ -126,6 +133,13 @@ def hal_draw_line(point_1, point_2, arg_color):
     point_1 = (point_1[0] * X_SCALE, point_1[1] * Y_SCALE)
     point_2 = (point_2[0] * X_SCALE, point_2[1] * Y_SCALE)
     pygame.draw.line(screen, arg_color, point_1, point_2)
+
+
+def hal_draw_circle(arg_color, center, radius, fill=1):
+    fill = int(min(fill, min(radius * X_SCALE, radius * Y_SCALE)))
+    rect = (((center[0] - radius) * X_SCALE), int((center[1] - radius) * Y_SCALE),
+            radius * 2 * X_SCALE, radius * 2 * Y_SCALE)
+    pygame.draw.ellipse(screen, arg_color, rect, fill)
 
 
 def get_real_time():
@@ -633,9 +647,25 @@ def death_anim():
     """shows the player animation in dependency of dead_counter (rays of diagonal lines)
        is calculating the number of max dead_counter (to make all lines disappear)
     """
-    global dead_counter
+    global dead_counter, killed_by_qix
     max_count = calc_max_exploding_line_steps()
     i_end = int(float(dead_counter)/SKIP_TICKS)
+    if killed_by_qix:
+        p1 = vector_add(point_of_death, (-1, -1))
+        p2 = vector_add(point_of_death, (1, 1))
+        hal_draw_rect(p1, p2, color[WHITE])
+        bubble_count = 0
+        anim_phase = min((dead_counter / float(max_count)), 1.0) * dead_anim_segments
+        for bubble in dead_bubbles:
+            bubble_count += 1
+            if anim_phase > bubble_count + 1:
+                hal_draw_circle((255, 255, 255), bubble[0], bubble[1], bubble[2])
+        if anim_phase > 6 + dead_anim_pause:
+            draw_lines = int(((anim_phase - (6 + dead_anim_pause)) / (dead_anim_segments - 6 - dead_anim_pause))
+                             * len(dead_bubbles[0][3]))
+            for index in range(0, draw_lines):
+                for b in range(0, 3):
+                    hal_draw_line(dead_bubbles[2 * b][3][index][0], dead_bubbles[2 * b][3][index][1], (0, 0, 0))
     if i_end < 10:
         i_start = 1
     else:
@@ -649,6 +679,7 @@ def death_anim():
             hal_draw_line(p1, p2, (255, 255, 255))
     if dead_counter > max_count:  # all lines out of the screen?
         revive_player()
+        killed_by_qix = False
         dead_counter = calc_max_exploding_line_steps()
 
 
@@ -769,10 +800,37 @@ def reset_player_pos():
         fuse[3] = False
 
 
-def kill_player():
-    global is_dead, dead_count_dir
+def generate_lines(center, width):
+    retval = []
+    for x in range(0, width):
+        retval.append((vector_add(center, (x, -width)), vector_add(center, (-x, width))))
+    for y in range(-width, width, 1):
+        retval.append((vector_add(center, (width, y)), vector_add(center, (-width, -y))))
+    for x in range(width, 0, -1):
+        retval.append((vector_add(center, (x, width)), vector_add(center, (-x, -width))))
+    random.shuffle(retval)
+    return retval
+
+
+def kill_player(qix_kill):
+    global is_dead, dead_count_dir, killed_by_qix, dead_bubbles
     is_dead = True
     dead_count_dir = 1
+    killed_by_qix = qix_kill
+    if killed_by_qix:
+        dead_bubbles = []
+        index = 0
+        if point_of_death == player_coords[current_player]:
+            lines = generate_lines(player_coords[current_player], bubble_radius[1])
+            dead_bubbles.append((player_coords[current_player], bubble_radius[1], 1, lines))
+            dead_bubbles.append((player_coords[current_player], bubble_radius[0], 1, lines))
+            index += 1
+        for bubble in range(index, 3):
+            center = vector_add(get_random_vector(dead_range), point_of_death)
+            center = [int(center[0]), int(center[1])]
+            lines = generate_lines(center, bubble_radius[1])
+            dead_bubbles.append((center, bubble_radius[1], 1, lines))
+            dead_bubbles.append((center, bubble_radius[0], 1, lines))
 
 
 def move_fuse():
@@ -781,13 +839,13 @@ def move_fuse():
             fuse[3] = True
             fuse[0:2] = calc_vertex_from_1d_path(players_path, fuse[0:2], 1, close=False)
             if vector_equal(fuse[0:2], player_coords[current_player]):  # fuse catches player!
-                kill_player()
+                kill_player(False)
         else:
             fuse[2] += SKIP_TICKS
 
 
 def move_qix():
-    global frame_counter, qix_coords
+    global frame_counter, qix_coords, point_of_death
     if frame_counter % 3 == 0:  # handle qix movement
         for q in range(max_qix[current_player]):
             qix = qix_move(q)
@@ -798,7 +856,8 @@ def move_qix():
                 for line in qix_coords[current_player][q]:
                     collision = check_line_vs_poly(line[:2], line[2:], players_path, close=False, sort=False)
                     if len(collision) != 0:
-                        kill_player()
+                        point_of_death = get_first_collision(collision)
+                        kill_player(True)
 
 
 def move_sparx():
@@ -806,7 +865,7 @@ def move_sparx():
         if sparc[4]:  # supersparc has found players path before so it follows it
             sparc[0:2] = calc_vertex_from_1d_path(players_path, sparc[0:2], abs(sparc[2]), close=False)
             if sparc[0:2] == player_coords[current_player]:  # supersparx catches player!
-                kill_player()
+                kill_player(False)
                 sparc[0:2] = players_path[0]  # for debug mode reset to path start
         else:
             old_val = sparc[0:2]
@@ -821,7 +880,7 @@ def move_sparx():
                     delta_path = cut_path(single_poly, old_val, sparc[0:2], sparc[2])
                     collision_with_player = find_intersect_index(delta_path, player_coords[current_player], close=False)
                     if len(collision_with_player) != 0:
-                        kill_player()
+                        kill_player(False)
                     resume_supersparx_normal(delta_path, sparc)
                     check_playerpath_supersparx(old_val, sparc)
                     break
@@ -885,7 +944,7 @@ def move_player(movement):
             for sparc in all_sparx:
                 collision_with_player = find_intersect_index(delta_path, sparc[0:2], close=False)
                 if len(collision_with_player) != 0:
-                    kill_player()
+                    kill_player(False)
                     break
 
     if len(possible_move) == 0:  # Player is roaming a new line
