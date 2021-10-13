@@ -1,4 +1,5 @@
 import os
+import json
 
 import pygame
 from pygame.locals import *
@@ -28,6 +29,7 @@ MM_HORIZONTAL = "free_horizontal"
 GM_GAME = "game"
 GM_GAMEOVER = "game_over"
 GM_HIGHSCORE = "highscore"
+GM_HIGHSCORE_ENTRY = "highscore_entry"
 
 BLACK = FONT_NORMAL = 0
 WHITE = CENTER_X = FONT_LARGE = 1
@@ -107,8 +109,13 @@ move_mode = []  # holds state and sub_state(for movement) of the general game
 game_over_coord = (81, 98)
 live_coord = (234, 14)
 split_poly = None
+highscore_file = os.path.join("data", "highscore.dat")
 highscore = [(30000, "QIX") for i in range(10)]
-fire_slow = fire_fast = up = down = left = right = False
+new_highscore_entry = "..."
+entry_index = 0
+entry_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ 012345789<."
+entry_accumulator = 0
+trigger_up = trigger_down = trigger_fast = fire_slow = fire_fast = up = down = left = right = False
 credit = 0
 
 
@@ -707,6 +714,14 @@ def paint_highscore():
         print_at(str(initials), (168, (109 + index * 7)), color[YELLOW], center_flags=0x00, anti_aliasing=0)
 
 
+def paint_highscore_entry():
+    paint_highscore()
+    print_at("SIGN UP", (104, 72))
+    print_at("MOVE JOYSTICK UP OR DOWN", (48, 216))
+    print_at("PRESS FAST TO ENTER", (66, 226))
+    print_at(new_highscore_entry, (116, 196), color[WHITE], use_font=FONT_LARGE)
+
+
 def paint_score():
     print_at("%d  %s" % (highscore[0][0], highscore[0][1]), (0, 13),
              txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
@@ -807,6 +822,12 @@ def paint_game():
         hal_blt(game_over, game_over_coord)
         if (frame_counter - paint_game.wait_counter) > 2.5 * TPS:
             reset_playfield(current_player)
+            set_game_mode(GM_HIGHSCORE_ENTRY)
+    if game_mode == GM_HIGHSCORE_ENTRY:
+        paint_claimed_and_lives()
+        if scores[current_player] > highscore[-1][0]:
+            paint_highscore_entry()
+        else:
             set_game_mode(GM_HIGHSCORE)
     if game_mode == GM_HIGHSCORE:
         paint_game.wait_counter = getattr(paint_game, 'wait_counter', -1)  # waits for the wipe
@@ -1193,7 +1214,40 @@ def qix_move(q):
 
 
 def handle_movement():
-    global move_mode, is_dead, dead_counter, dead_count_dir
+    global move_mode, is_dead, dead_counter, dead_count_dir,\
+        entry_accumulator, new_highscore_entry, entry_index, highscore
+    if game_mode == GM_HIGHSCORE_ENTRY:
+        entry_accumulator += 1
+        if entry_accumulator > TPS / 8 or trigger_down or trigger_up or trigger_fast:  # 1/4 second for letter updates
+            entry_accumulator = direction = 0
+            if up:
+                direction = 1
+            if down:
+                direction = -1
+            if trigger_fast:
+                entry_index += 1
+                if entry_index < 3:
+                    lst_entry = list(new_highscore_entry)
+                    lst_entry[entry_index] = lst_entry[entry_index - 1]
+                    new_highscore_entry = ''.join(lst_entry)
+                else:
+                    entry_index = 0
+                    for index in range(len(highscore)):
+                        if highscore[index][0] < scores[current_player]:
+                            highscore.insert(index, [scores[current_player], new_highscore_entry])
+                            highscore = highscore[:10]
+                            new_highscore_entry = "..."
+                            scores[current_player] = 0
+                            with open(highscore_file, "w") as fp:
+                                json.dump(highscore, fp)
+                            break
+                    set_game_mode(GM_HIGHSCORE)
+            current_char = new_highscore_entry[entry_index]
+            current_index = entry_chars.index(current_char)
+            current_index = (current_index + direction) % len(entry_chars)
+            lst_entry = list(new_highscore_entry)
+            lst_entry[entry_index] = entry_chars[current_index]
+            new_highscore_entry = ''.join(lst_entry)
     if game_mode == GM_GAME:
         if is_dead:
             dead_counter += dead_count_dir * SKIP_TICKS
@@ -1234,7 +1288,8 @@ def reset_playfield(index_player):
 
 def reset():
     global current_player, credit, player_lives, player_coords, move_mode, fuse, max_qix, qix_coords, \
-        fire_slow, fire_fast, up, down, left, right, is_dead, dead_counter, dead_count_dir, scores
+        trigger_up, trigger_down, trigger_fast, fire_slow, fire_fast, up, down, left, right, \
+        is_dead, dead_counter, dead_count_dir, scores
     current_player = 0
     credit -= 1
     reset_playfield(0)
@@ -1248,7 +1303,7 @@ def reset():
     qix_coords = [[[], []], [[], []]]  # 2 qixes with x x/y coordinate of qix
     init_qix(0)
     set_game_mode(GM_GAME)
-    fire_slow = fire_fast = up = down = left = right = is_dead = False
+    trigger_up = trigger_down = trigger_fast = fire_slow = fire_fast = up = down = left = right = is_dead = False
     dead_counter = calc_max_exploding_line_steps()
     dead_count_dir = -1
     is_dead = True
@@ -1269,10 +1324,8 @@ def init_qix(index_player):
 
 
 def init():
-    global window_surface, screen, logo, fonts, active_live, inactive_live, \
-        fuse, sprt_fuse, sprt_sparx, sprt_supersparx, max_qix, qix_coords
-    global window_surface, screen, logo, fonts, game_over, active_live, inactive_live, player_lives, player_coords, \
-        move_mode, fuse, sprt_fuse, sprt_sparx, sprt_supersparx, max_qix, qix_coords
+    global window_surface, screen, logo, fonts, game_over, active_live, inactive_live, player_lives, player_coords,\
+        move_mode, fuse, sprt_fuse, sprt_sparx, sprt_supersparx, highscore, max_qix, qix_coords
     pygame.init()
     window_surface = pygame.display.set_mode([WINDOW_WIDTH, WINDOW_HEIGHT])
     screen = pygame.Surface((WIDTH, HEIGHT))
@@ -1302,6 +1355,12 @@ def init():
         tmp = pygame.transform.scale(tmp, (max(int(size[2] * X_SCALE), 1), max(int(size[3] * Y_SCALE), 1)))
         tmp.set_colorkey(Color(0))
         sprt_supersparx.append(tmp)
+    if os.path.exists(highscore_file):
+        try:
+            with open(highscore_file) as fp:
+                highscore = json.load(fp)
+        except OSError:
+            highscore = [(30000, "QIX") for i in range(10)]
     set_game_mode(GM_GAMEOVER)
     reset_playfield(0)
     player_lives = [start_player_lives, start_player_lives]
@@ -1316,7 +1375,7 @@ def init():
 
 
 def press_key(key):
-    global pressed_keys, left, right, up, down, fire_slow, fire_fast, credit
+    global pressed_keys, left, right, up, down, fire_slow, fire_fast, trigger_up, trigger_down, trigger_fast, credit
     if key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN]:
         pressed_keys.append(key)
     if key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN]:
@@ -1326,13 +1385,13 @@ def press_key(key):
     if key == pygame.K_RIGHT and pygame.K_LEFT not in pressed_keys:
         right = True
     if key == pygame.K_UP and pygame.K_DOWN not in pressed_keys:
-        up = True
+        up = trigger_up = True
     if key == pygame.K_DOWN and pygame.K_UP not in pressed_keys:
-        down = True
+        down = trigger_down = True
     if key == pygame.K_LALT:
         fire_slow = True
     if key == pygame.K_LCTRL:
-        fire_fast = True
+        fire_fast = trigger_fast = True
     if key == pygame.K_5:
         credit += 1
     if key == pygame.K_6:
@@ -1371,7 +1430,7 @@ def release_key(key):
 
 
 def gameloop():  # https://dewitters.com/dewitters-gameloop/
-    global frame_counter
+    global frame_counter, trigger_up, trigger_down, trigger_fast
     next_game_tick = get_real_time() - 1
     one_sec_tick = get_time() + 1000
     while 1:
@@ -1385,6 +1444,7 @@ def gameloop():  # https://dewitters.com/dewitters-gameloop/
                 if event.type == KEYUP:
                     release_key(event.key)
             handle_movement()
+            trigger_up = trigger_down = trigger_fast = False
             frame_counter += 1
             if get_time() - one_sec_tick > 0:
                 if not is_dead and player_lives[current_player] > 0 and game_mode == GM_GAME:
