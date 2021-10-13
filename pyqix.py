@@ -25,6 +25,8 @@ MM_SPEED_FAST = "fast"
 MM_SPEED_SLOW = "slow"
 MM_VERTICAL = "free_vertical"
 MM_HORIZONTAL = "free_horizontal"
+GM_GAME = "game"
+GM_GAMEOVER = "game_over"
 
 BLACK = FONT_NORMAL = 0
 WHITE = CENTER_X = FONT_LARGE = 1
@@ -42,6 +44,7 @@ fonts = None
 screen = None
 window_surface = None
 logo = None
+game_over = None
 active_live = None
 inactive_live = None
 color = [(0, 0, 0), (255, 255, 255), (73, 73, 73),        # BLACK,   WHITE,  DARKGREY
@@ -98,7 +101,9 @@ deathray_distance = 4  # distance between diagonal lines
 no_of_deathrays = 8  # number of lines
 deathray_prolong = .5  # how many pixels every line grows after each step
 start_player_lives = 3
+game_mode = GM_GAMEOVER
 move_mode = []  # holds state and sub_state(for movement) of the general game
+game_over_coord = (81, 98)
 live_coord = (234, 14)
 split_poly = None
 highscore = [(30000, "QIX") for i in range(10)]
@@ -187,6 +192,11 @@ def vector_sub(v1, v2):
 def vector_equal(v1, v2, epsilon=0.00001):
     delta = (v1[0] - v2[0])**2 + (v1[1] - v2[1])**2
     return delta < epsilon
+
+
+def set_game_mode(mode):
+    global game_mode
+    game_mode = mode
 
 
 def pairwise(iterable):
@@ -767,12 +777,17 @@ def paint_playfield():
 def paint_game():
     hal_blt(logo, (24, 16))
     paint_score()
-    paint_playfield()
-    paint_claimed_and_lives()
-    paint_playerpath()
-    paint_player()
-    paint_sparx()
-    paint_qix()
+    if game_mode == GM_GAME:
+        paint_playfield()
+        paint_claimed_and_lives()
+        paint_playerpath()
+        paint_player()
+        paint_sparx()
+        paint_qix()
+    if game_mode == GM_GAMEOVER:
+        paint_playfield()
+        paint_claimed_and_lives()
+        hal_blt(game_over, game_over_coord)
 
 
 def show_sprite(img_stack, position):
@@ -784,11 +799,13 @@ def show_sprite(img_stack, position):
 
 def revive_player():
     global dead_count_dir, player_coords, players_path, player_lives, current_player
+    player_lives[current_player] -= 1
     if player_lives[current_player] > 0:
-        player_lives[current_player] -= 1
-        reset_player_pos()
         dead_count_dir = -1
+        reset_player_pos()
         reset_sparx(current_player)
+    else:
+        set_game_mode(GM_GAMEOVER)
 
 
 def reset_player_pos():
@@ -1147,38 +1164,63 @@ def qix_move(q):
 
 def handle_movement():
     global move_mode, is_dead, dead_counter, dead_count_dir
-    if is_dead:
-        dead_counter += dead_count_dir * SKIP_TICKS
-        if dead_counter <= 0:
-            dead_count_dir = 0
-            is_dead = False
-        if dead_count_dir < 0:
-            move_qix()
-    else:
-        movement = [0, 0]
-        if fire_fast and move_mode[1] == MM_SPEED_SLOW:
-            move_mode[1] = MM_SPEED_FAST
-        if left:
-            movement[0] -= 1
-        if right:
-            movement[0] += 1
-        if up:
-            movement[1] -= 1
-        if down:
-            movement[1] += 1
-        if player_lives[current_player] > 0:
-            candidate = move_player(movement)
-            if move_mode[0] == MM_VERTICAL or move_mode[0] == MM_HORIZONTAL:
-                if candidate == player_coords[current_player] and not half_frame_rate:
-                    move_fuse()
-            player_coords[current_player] = candidate
-            move_sparx()
-            move_qix()
+    if game_mode == GM_GAME:
+        if is_dead:
+            dead_counter += dead_count_dir * SKIP_TICKS
+            if dead_counter <= 0:
+                dead_count_dir = 0
+                is_dead = False
+            if dead_count_dir < 0:
+                move_qix()
+        else:
+            movement = [0, 0]
+            if fire_fast and move_mode[1] == MM_SPEED_SLOW:
+                move_mode[1] = MM_SPEED_FAST
+            if left:
+                movement[0] -= 1
+            if right:
+                movement[0] += 1
+            if up:
+                movement[1] -= 1
+            if down:
+                movement[1] += 1
+            if player_lives[current_player] > 0:
+                candidate = move_player(movement)
+                if move_mode[0] == MM_VERTICAL or move_mode[0] == MM_HORIZONTAL:
+                    if candidate == player_coords[current_player] and not half_frame_rate:
+                        move_fuse()
+                player_coords[current_player] = candidate
+                move_sparx()
+                move_qix()
 
 
 def reset_playfield(index_player):
-    global playfield
+    global playfield, old_polys, old_poly_colors, players_path
     playfield[index_player] = new_playfield
+    old_polys[index_player] = []  # the polys which were the borders before (need for sparx movement)
+    old_poly_colors[index_player] = []  # the colors of the polys (fast or slow)
+    players_path = []  # the path the player will draw on screen
+
+
+def reset():
+    global current_player, player_lives, player_coords, move_mode, fuse, max_qix, qix_coords, \
+        fire_slow, fire_fast, up, down, left, right, is_dead, dead_counter, dead_count_dir, scores
+    current_player = 0
+    reset_playfield(0)
+    player_lives = [start_player_lives, start_player_lives]
+    player_coords = [player_start, player_start]
+    move_mode = [MM_GRID, MM_SPEED_SLOW]
+    fuse = [0, 0, 0, False]  # fuse hunts player, if he draws a line and stops[x,y,sleep_timer,visible]
+    scores = [0, 0]
+    reset_sparx(0)
+    max_qix = [1, 1]
+    qix_coords = [[[], []], [[], []]]  # 2 qixes with x x/y coordinate of qix
+    init_qix(0)
+    set_game_mode(GM_GAME)
+    fire_slow = fire_fast = up = down = left = right = is_dead = False
+    dead_counter = calc_max_exploding_line_steps()
+    dead_count_dir = -1
+    is_dead = True
 
 
 def init_qix(index_player):
@@ -1196,8 +1238,10 @@ def init_qix(index_player):
 
 
 def init():
-    global window_surface, screen, logo, fonts, active_live, inactive_live, player_lives, player_coords, move_mode,\
+    global window_surface, screen, logo, fonts, active_live, inactive_live, \
         fuse, sprt_fuse, sprt_sparx, sprt_supersparx, max_qix, qix_coords
+    global window_surface, screen, logo, fonts, game_over, active_live, inactive_live, player_lives, player_coords, \
+        move_mode, fuse, sprt_fuse, sprt_sparx, sprt_supersparx, max_qix, qix_coords
     pygame.init()
     window_surface = pygame.display.set_mode([WINDOW_WIDTH, WINDOW_HEIGHT])
     screen = pygame.Surface((WIDTH, HEIGHT))
@@ -1206,6 +1250,8 @@ def init():
              pygame.font.Font("data/qix-large.ttf", int(10.0 * Y_SCALE))]
     logo, _ = hal_load_image(os.path.join('data', 'qix_logo.png'))
     logo = pygame.transform.scale(logo, (int(56.0 * X_SCALE), int(20 * Y_SCALE)))
+    game_over, _ = hal_load_image(os.path.join('data', 'qix_game_over.png'))
+    game_over = pygame.transform.scale(game_over,  (int(91 * X_SCALE), int(17 * Y_SCALE)))
     active_live, _ = hal_load_image(os.path.join('data', 'qix_live_w.png'))
     active_live = pygame.transform.scale(active_live, (int(3.0 * X_SCALE), int(3.0 * Y_SCALE)))
     inactive_live, _ = hal_load_image(os.path.join('data', 'qix_live_r.png'))
@@ -1225,7 +1271,7 @@ def init():
         tmp = pygame.transform.scale(tmp, (max(int(size[2] * X_SCALE), 1), max(int(size[3] * Y_SCALE), 1)))
         tmp.set_colorkey(Color(0))
         sprt_supersparx.append(tmp)
-
+    set_game_mode(GM_GAMEOVER)
     reset_playfield(0)
     player_lives = [start_player_lives, start_player_lives]
     player_coords = [player_start, player_start]
@@ -1279,6 +1325,10 @@ def release_key(key):
         up = status
     if key == pygame.K_DOWN and pygame.K_UP not in pressed_keys:
         down = status
+    if key == pygame.K_1:  # "1"-key
+        reset()
+    if key == pygame.K_2:  # "2"-key
+        reset()
 
 
 def gameloop():  # https://dewitters.com/dewitters-gameloop/
@@ -1298,7 +1348,7 @@ def gameloop():  # https://dewitters.com/dewitters-gameloop/
             handle_movement()
             frame_counter += 1
             if get_time() - one_sec_tick > 0:
-                if not is_dead and player_lives[current_player] > 0:
+                if not is_dead and player_lives[current_player] > 0 and game_mode == GM_GAME:
                     tick_sparc_respawn()
                 one_sec_tick = get_time() + 1000
             next_game_tick += SKIP_TICKS
@@ -1320,6 +1370,7 @@ if __name__ == '__main__':
     print("On the occasion of the 40th anniversary of the release at 18th. October 2021")
     print("Controls:")
     print("The standard MAME keyset is used:")
+    print("<1>, <2> start one player game")
     print("<CTRL> is FAST button")
     print("<ALT> is SLOW button")
     print("Cursor keys are Joystick")
