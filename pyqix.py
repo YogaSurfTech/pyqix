@@ -108,6 +108,7 @@ live_coord = (234, 14)
 split_poly = None
 highscore = [(30000, "QIX") for i in range(10)]
 fire_slow = fire_fast = up = down = left = right = False
+credit = 0
 
 
 def hal_blt(img, coords):
@@ -786,7 +787,8 @@ def paint_game():
         paint_qix()
     if game_mode == GM_GAMEOVER:
         paint_playfield()
-        paint_claimed_and_lives()
+        print_at("CREDITS", (0, 22), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
+        print_at("%02i" % credit, (0, 29), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
         hal_blt(game_over, game_over_coord)
 
 
@@ -1203,9 +1205,10 @@ def reset_playfield(index_player):
 
 
 def reset():
-    global current_player, player_lives, player_coords, move_mode, fuse, max_qix, qix_coords, \
+    global current_player, credit, player_lives, player_coords, move_mode, fuse, max_qix, qix_coords, \
         fire_slow, fire_fast, up, down, left, right, is_dead, dead_counter, dead_count_dir, scores
     current_player = 0
+    credit -= 1
     reset_playfield(0)
     player_lives = [start_player_lives, start_player_lives]
     player_coords = [player_start, player_start]
@@ -1285,7 +1288,7 @@ def init():
 
 
 def press_key(key):
-    global pressed_keys, left, right, up, down, fire_slow, fire_fast
+    global pressed_keys, left, right, up, down, fire_slow, fire_fast, credit
     if key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN]:
         pressed_keys.append(key)
     if key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN]:
@@ -1302,6 +1305,12 @@ def press_key(key):
         fire_slow = True
     if key == pygame.K_LCTRL:
         fire_fast = True
+    if key == pygame.K_5:
+        credit += 1
+    if key == pygame.K_6:
+        credit += 2
+    if credit > 30:
+        credit = 30
 
 
 def release_key(key):
@@ -1326,9 +1335,11 @@ def release_key(key):
     if key == pygame.K_DOWN and pygame.K_UP not in pressed_keys:
         down = status
     if key == pygame.K_1:  # "1"-key
-        reset()
+        if credit > 0 and game_mode == GM_GAMEOVER:
+            reset()
     if key == pygame.K_2:  # "2"-key
-        reset()
+        if credit > 1 and game_mode == GM_GAMEOVER:
+            reset()
 
 
 def gameloop():  # https://dewitters.com/dewitters-gameloop/
@@ -1370,6 +1381,7 @@ if __name__ == '__main__':
     print("On the occasion of the 40th anniversary of the release at 18th. October 2021")
     print("Controls:")
     print("The standard MAME keyset is used:")
+    print("<5>, <6> throw in 1 / 2 credits")
     print("<1>, <2> start one player game")
     print("<CTRL> is FAST button")
     print("<ALT> is SLOW button")
