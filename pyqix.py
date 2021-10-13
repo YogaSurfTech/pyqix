@@ -27,6 +27,7 @@ MM_VERTICAL = "free_vertical"
 MM_HORIZONTAL = "free_horizontal"
 GM_GAME = "game"
 GM_GAMEOVER = "game_over"
+GM_HIGHSCORE = "highscore"
 
 BLACK = FONT_NORMAL = 0
 WHITE = CENTER_X = FONT_LARGE = 1
@@ -198,6 +199,7 @@ def vector_equal(v1, v2, epsilon=0.00001):
 def set_game_mode(mode):
     global game_mode
     game_mode = mode
+    paint_game.wait_counter = -1
 
 
 def pairwise(iterable):
@@ -694,6 +696,17 @@ def death_anim():
         dead_counter = calc_max_exploding_line_steps()
 
 
+def paint_highscore():
+    print_at("qix KICKERS", (84, 60), color[WHITE], center_flags=CENTER_X, anti_aliasing=0, use_font=FONT_LARGE)
+    print_at("SCORE", (59, 90), color[WHITE], center_flags=0x00, anti_aliasing=0, use_font=FONT_LARGE)
+    print_at("INITIALS", (147, 90), color[WHITE], center_flags=0x00, anti_aliasing=0, use_font=FONT_LARGE)
+    for index in range(10):
+        pts, initials = highscore[index]
+        dim = print_at(str(pts), (86, (109 + index * 7)), color[YELLOW], center_flags=NO_BLIT, anti_aliasing=0)
+        print_at(str(pts), (100-dim[0]/X_SCALE, (109 + index * 7)), color[YELLOW], center_flags=0x00, anti_aliasing=0)
+        print_at(str(initials), (168, (109 + index * 7)), color[YELLOW], center_flags=0x00, anti_aliasing=0)
+
+
 def paint_score():
     print_at("%d  %s" % (highscore[0][0], highscore[0][1]), (0, 13),
              txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
@@ -786,10 +799,25 @@ def paint_game():
         paint_sparx()
         paint_qix()
     if game_mode == GM_GAMEOVER:
+        if paint_game.wait_counter == -1:
+            paint_game.wait_counter = frame_counter
         paint_playfield()
         print_at("CREDITS", (0, 22), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
         print_at("%02i" % credit, (0, 29), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
         hal_blt(game_over, game_over_coord)
+        if (frame_counter - paint_game.wait_counter) > 2.5 * TPS:
+            reset_playfield(current_player)
+            set_game_mode(GM_HIGHSCORE)
+    if game_mode == GM_HIGHSCORE:
+        paint_game.wait_counter = getattr(paint_game, 'wait_counter', -1)  # waits for the wipe
+        if paint_game.wait_counter == -1:
+            paint_game.wait_counter = frame_counter
+        paint_playfield()
+        print_at("CREDITS", (0, 22), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
+        print_at("%02i" % credit, (0, 29), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
+        paint_highscore()
+        if (frame_counter - paint_game.wait_counter) > 2.5 * TPS:
+            set_game_mode(GM_GAMEOVER)
 
 
 def show_sprite(img_stack, position):
@@ -1335,10 +1363,10 @@ def release_key(key):
     if key == pygame.K_DOWN and pygame.K_UP not in pressed_keys:
         down = status
     if key == pygame.K_1:  # "1"-key
-        if credit > 0 and game_mode == GM_GAMEOVER:
+        if credit > 0 and game_mode in [GM_GAMEOVER, GM_HIGHSCORE]:
             reset()
     if key == pygame.K_2:  # "2"-key
-        if credit > 1 and game_mode == GM_GAMEOVER:
+        if credit > 1 and game_mode in [GM_GAMEOVER, GM_HIGHSCORE]:
             reset()
 
 
