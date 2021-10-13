@@ -850,12 +850,17 @@ def show_sprite(img_stack, position):
 
 def revive_player():
     global dead_count_dir, player_coords, players_path, player_lives, current_player
-    player_lives[current_player] -= 1
+    if player_lives[current_player] > 0:
+        player_lives[current_player] -= 1
+        reset_player_pos()
+    if game_mode == GM_GAME:
+        current_player = (current_player + 1) % max_player
     if player_lives[current_player] > 0:
         dead_count_dir = -1
         reset_player_pos()
         reset_sparx(current_player)
     else:
+        current_player = (current_player + 1) % max_player  # switch back to current player for correct playfield
         set_game_mode(GM_GAMEOVER)
 
 
@@ -1286,22 +1291,24 @@ def reset_playfield(index_player):
     players_path = []  # the path the player will draw on screen
 
 
-def reset():
+def reset(num_player):
     global current_player, credit, player_lives, player_coords, move_mode, fuse, max_qix, qix_coords, \
         trigger_up, trigger_down, trigger_fast, fire_slow, fire_fast, up, down, left, right, \
-        is_dead, dead_counter, dead_count_dir, scores
+        is_dead, dead_counter, dead_count_dir, scores, max_player
+    max_player = num_player
     current_player = 0
-    credit -= 1
-    reset_playfield(0)
+    credit -= max_player
     player_lives = [start_player_lives, start_player_lives]
     player_coords = [player_start, player_start]
     move_mode = [MM_GRID, MM_SPEED_SLOW]
     fuse = [0, 0, 0, False]  # fuse hunts player, if he draws a line and stops[x,y,sleep_timer,visible]
     scores = [0, 0]
-    reset_sparx(0)
     max_qix = [1, 1]
     qix_coords = [[[], []], [[], []]]  # 2 qixes with x x/y coordinate of qix
-    init_qix(0)
+    for index in range(max_player):
+        reset_playfield(index)
+        init_qix(index)
+        reset_sparx(index)
     set_game_mode(GM_GAME)
     trigger_up = trigger_down = trigger_fast = fire_slow = fire_fast = up = down = left = right = is_dead = False
     dead_counter = calc_max_exploding_line_steps()
@@ -1423,10 +1430,10 @@ def release_key(key):
         down = status
     if key == pygame.K_1:  # "1"-key
         if credit > 0 and game_mode in [GM_GAMEOVER, GM_HIGHSCORE]:
-            reset()
+            reset(1)
     if key == pygame.K_2:  # "2"-key
         if credit > 1 and game_mode in [GM_GAMEOVER, GM_HIGHSCORE]:
-            reset()
+            reset(2)
 
 
 def gameloop():  # https://dewitters.com/dewitters-gameloop/
