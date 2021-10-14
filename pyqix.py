@@ -28,6 +28,7 @@ MM_VERTICAL = "free_vertical"
 MM_HORIZONTAL = "free_horizontal"
 GM_GAME = "game"
 GM_LEVEL_ADVANCE = "advance"
+GM_FILL = "fill_poly"
 GM_GAMEOVER = "game_over"
 GM_HIGHSCORE = "highscore"
 GM_HIGHSCORE_ENTRY = "highscore_entry"
@@ -111,7 +112,13 @@ game_mode = GM_GAMEOVER
 move_mode = []  # holds state and sub_state(for movement) of the general game
 game_over_coord = (81, 98)
 live_coord = (234, 14)
+poly_fillrate = int(GAME_WIDTH * GAME_HEIGHT / 256)
+current_poly_fillrate = poly_fillrate
+poly_fill_color_index = 0
+pixel_amount = 0
+buckets = []
 split_poly = None
+freeze_time = 0
 percentage_needed = 75
 sfx_samples = {}
 sfx_current_playing = ""  # type: str
@@ -213,6 +220,104 @@ def set_game_mode(mode):
     global game_mode
     game_mode = mode
     paint_game.wait_counter = -1
+
+
+def init_stepwise_poly(arg_poly):
+    """ initialized the data structure to fill the polygon one part at a time
+    :param arg_poly: The polygon to fill
+    :return: the list with the different buckets to fill separately
+    """
+    global current_poly_fillrate
+    retval = []
+    horiz = []
+    vert = []
+    last_line_horizontal = None
+    for index in range(len(arg_poly)):
+        p1 = arg_poly[index]
+        p2 = arg_poly[(index + 1) % len(arg_poly)]
+        dx, dy = vector_sub(p2, p1)
+        if dx != 0 and dy != 0:
+            print("Something wrong.. not AA-poly:(%s / %s)" % (p1, p2))
+        elif dx != 0:
+            if last_line_horizontal is True:
+                horiz[-1] = (horiz[-1][0], p2)  # the xco of the second point will be updated with the xco of new endp
+            else:
+                horiz.append((p1, p2))
+            last_line_horizontal = True
+        elif dy != 0:
+            if last_line_horizontal is False:
+                vert[-1] = (vert[-1][0], p2)
+            else:
+                vert.append((p1, p2))
+            last_line_horizontal = False
+    horiz.sort(key=lambda el: min(el[0][1], el[1][1]))
+    vert.sort(key=lambda el: min(el[0][0], el[1][0]))
+    already_visited = set()
+    total_pixel_count = 0
+    for index in range(0, len(vert)-1):
+        x_start = vert[index][0][0]
+        x_end = -1
+        if x_start not in already_visited:
+            for next_vert in range(index + 1, len(vert)):
+                if vert[next_vert][0][0] != x_start:
+                    x_end = vert[next_vert][0][0]
+                    break
+            bucket = {'x_start': x_start, 'x_end': x_end, 'lines': []}
+            is_on_poly = False
+            y_start = -1
+            total_length = 0
+            for horiz_line in horiz:
+                x_horiz_start = min(horiz_line[0][0], horiz_line[1][0])
+                x_horiz_end = max(horiz_line[0][0], horiz_line[1][0])
+                if x_horiz_start <= x_start and x_horiz_end >= x_end:
+                    if is_on_poly:
+                        y_end = max(horiz_line[0][1], horiz_line[1][1])
+                        bucket['lines'].append((y_start, y_end))
+                        total_length += (y_end - y_start)
+                        is_on_poly = False
+                    else:
+                        y_start = horiz_line[1][1]  # both yco are same on a horizontal line
+                        is_on_poly = True
+            total_pixel_count += (x_end - x_start) * total_length
+            bucket['vertical_pixel_count'] = total_length
+            bucket['total_pixel_count'] = total_pixel_count
+            current_poly_fillrate = poly_fillrate
+            if total_pixel_count / poly_fillrate < 3:   # at least 3 frames for filling a poly
+                current_poly_fillrate = max(1, total_pixel_count / 3)
+            retval.append(bucket)
+            already_visited.add(x_start)
+    return retval
+
+
+def paint_stepwise_poly(arg_buckets, increment):
+    """ Paints the poly only until increment (no of pixels)
+    :param arg_buckets: The bucket structure[x1,x2 and list of y1/y2 pairs] to fill stepwise the polygon
+    :param increment: the number of pixels to paint
+    :return: False: there are more pixel to paint; True: The whole polygon was painted
+    """
+    remaining_pixels = increment
+    bucket = None
+    for bucket in arg_buckets:
+        if increment > bucket['total_pixel_count']:
+            x1 = bucket['x_start']
+            x2 = bucket['x_end']
+            for line in bucket['lines']:
+                y1 = line[0]
+                y2 = line[1]
+                path = [(x1, y1), (x1, y2), (x2, y2), (x2, y1)]
+                hal_fill_poly(path, color[poly_fill_color_index])
+                remaining_pixels -= (x2 - x1) * (y2 - y1)
+        else:
+            break
+    if increment < bucket['total_pixel_count']:   # paint fractional part
+        pixel_count = 0
+        for xco in range(bucket['x_start'], bucket['x_end']):
+            for vert_line in bucket['lines']:
+                hal_draw_rect((xco, vert_line[0]), (xco+1, vert_line[1]), color[poly_fill_color_index])
+                pixel_count += (vert_line[1] - vert_line[0])
+            if pixel_count > remaining_pixels:
+                break
+    return increment >= arg_buckets[-1]['total_pixel_count'] - 1
 
 
 def pairwise(iterable):
@@ -813,12 +918,21 @@ def paint_playfield():
 def paint_game():
     hal_blt(logo, (24, 16))
     paint_score()
-    if game_mode == GM_GAME:
-        paint_playfield()
-        paint_claimed_and_lives()
+
+    if game_mode == GM_FILL:
+        fill_finished = paint_stepwise_poly(buckets, pixel_amount)
+        draw_list(split_poly, color[GREY])
+        if fill_finished:
+            exit_poly_fill()
+
+    paint_playfield()
+
+    if game_mode == GM_GAME or game_mode == GM_FILL:
+        if enter_fill_poly.old_mode == GM_GAME:
+            paint_claimed_and_lives()
+        paint_sparx()
         paint_playerpath()
         paint_player()
-        paint_sparx()
         paint_qix()
 
     if game_mode == GM_LEVEL_ADVANCE:
@@ -870,6 +984,72 @@ def paint_game():
         paint_highscore()
         if (frame_counter - paint_game.wait_counter) > 2.5 * TPS:
             set_game_mode(GM_GAMEOVER)
+
+
+def enter_fill_poly(candidate):
+    global game_mode, move_mode, pixel_amount, playfield, split_poly, buckets, poly_fill_color_index, \
+        players_path, freeze_time
+    # 1st: split playfield
+    poly1, poly2 = split_polygon(playfield[current_player], list(players_path))
+    # 2nd: check which poly is new playfield(the one with the qix inside)
+    if max_qix[current_player] > 1 and is_inside(poly1, qix_coords[current_player][0][0]) \
+            != is_inside(poly1, qix_coords[current_player][1][0]):
+        level[current_player] += 1
+        set_game_mode(GM_LEVEL_ADVANCE)  # check for split between both qixes
+        play_sound('', -1)
+        return player_coords[current_player]
+    else:
+        if is_inside(poly1, qix_coords[current_player][0][0]):
+            playfield[current_player] = poly1
+            split_poly = poly2
+        else:
+            playfield[current_player] = poly2
+            split_poly = poly1
+    buckets = init_stepwise_poly(split_poly)
+    poly_fill_color_index = CYAN
+    pixel_amount = 0
+    sfx_name = 'fill_fast'
+    # 3rd: check for fill color (move_mode[1] stays until MM_FILL ends)
+    if move_mode[1] == MM_SPEED_SLOW:
+        poly_fill_color_index = DARKRED
+        sfx_name = 'fill_slow'
+    enter_fill_poly.old_mode = getattr(enter_fill_poly, 'old_mode', game_mode)
+    game_mode = GM_FILL
+    move_mode[0] = MM_GRID
+    freeze_time = get_time() + 150 + random.random() * 250
+    play_sound(sfx_name, -1)
+    return candidate
+
+
+def exit_poly_fill():
+    global scores, area_poly, move_mode, players_path
+    set_game_mode(getattr(enter_fill_poly, 'old_mode', GM_GAME))
+    # calc score, add color and handle supersparx on path
+    fill_color = CYAN
+    slow_multiplier = 1
+    if move_mode[1] == MM_SPEED_SLOW:
+        fill_color = DARKRED
+        slow_multiplier = 2
+    playfield_area = abs(calc_area(playfield[current_player]))
+    complete = abs(calc_area(new_playfield))
+    new_poly_area = abs(calc_area(split_poly))
+    old_percentage = (playfield_area + new_poly_area) * 100 / complete
+    new_percentage = playfield_area * 100 / complete
+    bonus = int((old_percentage - new_percentage) * 100) * slow_multiplier
+    scores[current_player] += bonus
+    area_poly[current_player] = 100 - int(100 * abs(calc_area(playfield[current_player]))
+                                          / abs(calc_area(new_playfield)))
+    old_poly_colors[current_player].append(color[fill_color])
+    old_polys[current_player].append(split_poly)
+    check_super_sparx_after_polysplit(players_path, all_sparx)
+    move_mode[1] = None
+    players_path = []
+    if area_poly[current_player] >= percentage_needed:
+        level[current_player] += 1
+        set_game_mode(GM_LEVEL_ADVANCE)
+        play_sound('', -1)
+    else:
+        play_sound('background', -1)
 
 
 def show_sprite(img_stack, position):
@@ -1089,46 +1269,8 @@ def move_player(movement):
                 players_path = [(int(x[0]), int(x[1])) for x in players_path]
                 candidate = players_path[-1]
                 fuse[:2] = players_path[0]
-                # 1st: split playfield
-                poly1, poly2 = split_polygon(playfield[current_player], list(players_path))
-                old_playfield_area = abs(calc_area(playfield[current_player]))
-                # 2nd: check which poly is new playfield(the one with the qix inside)
-                if max_qix[current_player] > 1 and is_inside(poly1, qix_coords[current_player][0][0]) \
-                        != is_inside(poly1, qix_coords[current_player][1][0]):
-                    level[current_player] += 1
-                    set_game_mode(
-                        GM_LEVEL_ADVANCE)  # check for epic split between both qixes
-                    return player_coords[current_player]
-                else:
-                    if is_inside(poly1, qix_coords[current_player][0][0]):
-                        playfield[current_player] = poly1
-                        split_poly = poly2
-                    else:
-                        playfield[current_player] = poly2
-                        split_poly = poly1
-                old_polys[current_player].append(split_poly)
-                # 3rd: calc points, add color and handle supersparx on path
-                i = CYAN
-                slow_factor = 1
-                if move_mode[1] == MM_SPEED_SLOW:
-                    i = DARKRED
-                    slow_factor = 2
-                playfield_area = abs(calc_area(playfield[current_player]))
-                complete = abs(calc_area(new_playfield))
-                old_percentage = old_playfield_area * 100 / complete
-                new_percentage = playfield_area * 100 / complete
-                bonus = int((old_percentage - new_percentage) * 100) * slow_factor
-                scores[current_player] += bonus
-                area_poly[current_player] = 100 - int(
-                    100 * abs(calc_area(playfield[current_player])) / abs(calc_area(new_playfield)))
-                old_poly_colors[current_player].append(color[i])
-                check_super_sparx_after_polysplit(players_path, all_sparx)
-                players_path = []
-                if area_poly[current_player] >= percentage_needed:
-                    level[current_player] += 1
-                    set_game_mode(GM_LEVEL_ADVANCE)
-                    play_sound('', -1)
-                move_mode = [MM_GRID, None]
+                candidate = enter_fill_poly(candidate)
+
         else:  # in roaming mode only move if fast or slow button is pressed
             candidate = list(player_coords[current_player])
         # we are not allowing moving outside the playfield
@@ -1266,8 +1408,12 @@ def qix_move(q):
 
 
 def handle_movement():
-    global move_mode, is_dead, dead_counter, dead_count_dir,\
+
+    global is_dead, dead_counter, dead_count_dir, pixel_amount, \
         entry_accumulator, new_highscore_entry, entry_index, highscore
+    if game_mode == GM_FILL:
+        if get_time() > freeze_time:
+            pixel_amount += current_poly_fillrate
     if game_mode == GM_HIGHSCORE_ENTRY:
         entry_accumulator += 1
         if entry_accumulator > TPS / 8 or trigger_down or trigger_up or trigger_fast:  # 1/4 second for letter updates
@@ -1373,6 +1519,7 @@ def reset(num_player):
         init_qix(index)
         init_level(index)
     set_game_mode(GM_GAME)
+    enter_fill_poly.old_mode = GM_GAME
     trigger_up = trigger_down = trigger_fast = fire_slow = fire_fast = up = down = left = right = is_dead = False
     dead_counter = calc_max_exploding_line_steps()
     dead_count_dir = -1
