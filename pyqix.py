@@ -113,6 +113,8 @@ game_over_coord = (81, 98)
 live_coord = (234, 14)
 split_poly = None
 percentage_needed = 75
+sfx_samples = {}
+sfx_current_playing = ""  # type: str
 highscore_file = os.path.join("data", "highscore.dat")
 highscore = [(30000, "QIX") for i in range(10)]
 new_highscore_entry = "..."
@@ -840,6 +842,7 @@ def paint_game():
             scores[current_player] += bonus
             set_game_mode(GM_GAME)
             init_level(current_player)
+            play_sound('background')
     if game_mode == GM_GAMEOVER:
         if paint_game.wait_counter == -1:
             paint_game.wait_counter = frame_counter
@@ -847,6 +850,7 @@ def paint_game():
         print_at("CREDITS", (0, 22), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
         print_at("%02i" % credit, (0, 29), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
         hal_blt(game_over, game_over_coord)
+        play_sound('')
         if (frame_counter - paint_game.wait_counter) > 2.5 * TPS:
             reset_playfield(current_player)
             set_game_mode(GM_HIGHSCORE_ENTRY)
@@ -885,6 +889,7 @@ def revive_player():
     if player_lives[current_player] > 0:
         dead_count_dir = -1
         reset_player_pos()
+        play_sound("spawn", 0)
         reset_sparx(current_player)
     else:
         current_player = (current_player + 1) % max_player  # switch back to current player for correct playfield
@@ -914,6 +919,7 @@ def generate_lines(center, width):
 
 def kill_player(qix_kill):
     global is_dead, dead_count_dir, killed_by_qix, dead_bubbles
+    play_sound("kill", 0)
     is_dead = True
     dead_count_dir = 1
     killed_by_qix = qix_kill
@@ -935,6 +941,7 @@ def kill_player(qix_kill):
 
 def move_fuse():
     if move_mode[0] != MM_GRID:  # handle fuse movement
+        play_sound('fuse')
         if fuse[2] > fuse_sleep:  # TODO: add up time player is waiting on path
             fuse[3] = True
             fuse[0:2] = calc_vertex_from_1d_path(players_path, fuse[0:2], 1, close=False)
@@ -1120,6 +1127,7 @@ def move_player(movement):
                 if area_poly[current_player] >= percentage_needed:
                     level[current_player] += 1
                     set_game_mode(GM_LEVEL_ADVANCE)
+                    play_sound('', -1)
                 move_mode = [MM_GRID, None]
         else:  # in roaming mode only move if fast or slow button is pressed
             candidate = list(player_coords[current_player])
@@ -1298,6 +1306,7 @@ def handle_movement():
             if dead_counter <= 0:
                 dead_count_dir = 0
                 is_dead = False
+                play_sound('background')
             if dead_count_dir < 0:
                 move_qix()
         else:
@@ -1317,6 +1326,8 @@ def handle_movement():
                 if move_mode[0] == MM_VERTICAL or move_mode[0] == MM_HORIZONTAL:
                     if candidate == player_coords[current_player] and not half_frame_rate:
                         move_fuse()
+                    else:
+                        play_sound("background")
                 player_coords[current_player] = candidate
                 move_sparx()
                 move_qix()
@@ -1338,6 +1349,7 @@ def init_level(index_player):
     reset_sparx(index_player)
     area_poly[index_player] = 0
     move_mode = [MM_GRID, MM_SPEED_SLOW]
+    play_sound('')
     if level[index_player] > 2:
         max_qix[index_player] = 2
         init_qix(index_player=index_player)
@@ -1365,6 +1377,7 @@ def reset(num_player):
     dead_counter = calc_max_exploding_line_steps()
     dead_count_dir = -1
     is_dead = True
+    play_sound('spawn')
 
 
 def init_qix(index_player):
@@ -1385,6 +1398,7 @@ def init():
     global window_surface, screen, logo, fonts, game_over, active_live, inactive_live, player_lives, player_coords,\
         move_mode, fuse, sprt_fuse, sprt_sparx, sprt_supersparx, highscore, max_qix, qix_coords
     pygame.init()
+    pygame.mixer.init()
     window_surface = pygame.display.set_mode([WINDOW_WIDTH, WINDOW_HEIGHT])
     screen = pygame.Surface((WIDTH, HEIGHT))
     fonts = [pygame.font.Font("data/qix-small.ttf", int(8.0 * Y_SCALE)),
@@ -1419,6 +1433,8 @@ def init():
                 highscore = json.load(fp)
         except OSError:
             highscore = [(30000, "QIX") for i in range(10)]
+    for name in ["background", "fuse", "fill_fast", "fill_slow", "kill", "spawn", "win"]:
+        sfx_samples[name] = pygame.mixer.Sound(os.path.join('data', 'sfx', 'qix_' + name + '.wav'))
     set_game_mode(GM_GAMEOVER)
     reset_playfield(0)
     player_lives = [start_player_lives, start_player_lives]
@@ -1430,6 +1446,16 @@ def init():
     qix_coords = [[[], []], [[], []]]  # 2 qixes with x x/y coordinate of qix
     init_qix(0)
     init_qix(1)
+
+
+def play_sound(sfx_name, repeat=-1):
+    global sfx_current_playing
+    if sfx_name != sfx_current_playing:
+        if sfx_current_playing != '':
+            sfx_samples[sfx_current_playing].stop()
+        sfx_current_playing = sfx_name
+        if sfx_current_playing != '':
+            sfx_samples[sfx_current_playing].play(repeat)
 
 
 def press_key(key):
