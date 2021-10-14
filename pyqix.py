@@ -27,6 +27,7 @@ MM_SPEED_SLOW = "slow"
 MM_VERTICAL = "free_vertical"
 MM_HORIZONTAL = "free_horizontal"
 GM_GAME = "game"
+GM_LEVEL_ADVANCE = "advance"
 GM_GAMEOVER = "game_over"
 GM_HIGHSCORE = "highscore"
 GM_HIGHSCORE_ENTRY = "highscore_entry"
@@ -63,9 +64,11 @@ old_polys = [[], []]
 old_poly_colors = [[], []]
 player_coords = [[], []]  # an  x/y coordinate
 player_lives = [0, 0]  # num lives of both players
+area_poly = [0, 0]
 scores = [0, 0]
 qix_coords = [[[], []], [[], []]]  # x/y, x/y coordinates  of qix lines for each player
 max_qix = [1, 1]  # number of qixes (in later levels are 2 if you manage to split them you win the level)
+level = [1, 1]  # current level
 # ---------------------
 players_path = []  # the path the player will draw on screen
 player_size = 3.0
@@ -109,6 +112,7 @@ move_mode = []  # holds state and sub_state(for movement) of the general game
 game_over_coord = (81, 98)
 live_coord = (234, 14)
 split_poly = None
+percentage_needed = 75
 highscore_file = os.path.join("data", "highscore.dat")
 highscore = [(30000, "QIX") for i in range(10)]
 new_highscore_entry = "..."
@@ -620,8 +624,8 @@ def reset_sparx(index_player, player_pos=None):
     sparx_super_counter = sparx_super_spawn
     x1, y1 = calc_vertex_from_1d_path(playfield[index_player], player_pos,
                                       int(calc_1d_path(playfield[index_player]) / 2))
-    all_sparx = [[x1, y1, -1, 0, False, [], []],
-                 [x1, y1,  1, 0, False, [], []]]
+    all_sparx = [[x1, y1, -1.0 * (1 + level[index_player] // 4), 0, False, [], []],
+                 [x1, y1,  1.0 * (1 + level[index_player] // 4), 0, False, [], []]]
 
 
 def tick_sparc_respawn():
@@ -763,7 +767,8 @@ def paint_playerpath():
 
 def paint_claimed_and_lives():
     print_at("CLAIMED", (0, 22), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
-    print_at("0%  75%", (0, 29), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
+    print_at(str(area_poly[current_player]) + "%  "+str(percentage_needed)+"%", (0, 29),
+             txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
     for player in range(max_player):
         for index in range(start_player_lives):
             start_coord = [(live_coord[0] + (index // 3) * 4),
@@ -813,6 +818,28 @@ def paint_game():
         paint_player()
         paint_sparx()
         paint_qix()
+
+    if game_mode == GM_LEVEL_ADVANCE:
+        if paint_game.wait_counter == -1:  # waits for the wipe
+            paint_game.wait_counter = frame_counter
+        frames = frame_counter - paint_game.wait_counter
+        paint_claimed_and_lives()
+        reset_playfield(current_player)
+        paint_playfield()
+        bonus = (area_poly[current_player] - percentage_needed) * 1000
+        if bonus < 0:
+            bonus = 0
+        print_at("PERCENTAGE", (80, 90))
+        print_at("THRESHOLD", (80, 100))
+        print_at("BONUS", (80, 110))
+        print_at(str(area_poly[current_player]) + "%", (157, 90))
+        print_at(str(percentage_needed) + "%", (157, 100))
+        print_at(str(area_poly[current_player] - percentage_needed) + " X 1000", (157, 110))
+        print_at(str(bonus), (115, 130))
+        if frames > 230:
+            scores[current_player] += bonus
+            set_game_mode(GM_GAME)
+            init_level(current_player)
     if game_mode == GM_GAMEOVER:
         if paint_game.wait_counter == -1:
             paint_game.wait_counter = frame_counter
@@ -1059,12 +1086,19 @@ def move_player(movement):
                 poly1, poly2 = split_polygon(playfield[current_player], list(players_path))
                 old_playfield_area = abs(calc_area(playfield[current_player]))
                 # 2nd: check which poly is new playfield(the one with the qix inside)
-                if is_inside(poly1, qix_coords[current_player][0][0]):
-                    playfield[current_player] = poly1
-                    split_poly = poly2
+                if max_qix[current_player] > 1 and is_inside(poly1, qix_coords[current_player][0][0]) \
+                        != is_inside(poly1, qix_coords[current_player][1][0]):
+                    level[current_player] += 1
+                    set_game_mode(
+                        GM_LEVEL_ADVANCE)  # check for epic split between both qixes
+                    return player_coords[current_player]
                 else:
-                    playfield[current_player] = poly2
-                    split_poly = poly1
+                    if is_inside(poly1, qix_coords[current_player][0][0]):
+                        playfield[current_player] = poly1
+                        split_poly = poly2
+                    else:
+                        playfield[current_player] = poly2
+                        split_poly = poly1
                 old_polys[current_player].append(split_poly)
                 # 3rd: calc points, add color and handle supersparx on path
                 i = CYAN
@@ -1078,9 +1112,14 @@ def move_player(movement):
                 new_percentage = playfield_area * 100 / complete
                 bonus = int((old_percentage - new_percentage) * 100) * slow_factor
                 scores[current_player] += bonus
+                area_poly[current_player] = 100 - int(
+                    100 * abs(calc_area(playfield[current_player])) / abs(calc_area(new_playfield)))
                 old_poly_colors[current_player].append(color[i])
                 check_super_sparx_after_polysplit(players_path, all_sparx)
                 players_path = []
+                if area_poly[current_player] >= percentage_needed:
+                    level[current_player] += 1
+                    set_game_mode(GM_LEVEL_ADVANCE)
                 move_mode = [MM_GRID, None]
         else:  # in roaming mode only move if fast or slow button is pressed
             candidate = list(player_coords[current_player])
@@ -1291,24 +1330,36 @@ def reset_playfield(index_player):
     players_path = []  # the path the player will draw on screen
 
 
+def init_level(index_player):
+    global playfield, old_polys, old_poly_colors, players_path, max_qix, area_poly, dead_counter, move_mode, \
+        dead_count_dir, dead_counter, is_dead
+    reset_playfield(index_player)
+    player_coords[index_player] = player_start
+    reset_sparx(index_player)
+    area_poly[index_player] = 0
+    move_mode = [MM_GRID, MM_SPEED_SLOW]
+    if level[index_player] > 2:
+        max_qix[index_player] = 2
+        init_qix(index_player=index_player)
+
+
 def reset(num_player):
-    global current_player, credit, player_lives, player_coords, move_mode, fuse, max_qix, qix_coords, \
+    global current_player, credit, player_lives, move_mode, fuse, max_qix, qix_coords, \
         trigger_up, trigger_down, trigger_fast, fire_slow, fire_fast, up, down, left, right, \
-        is_dead, dead_counter, dead_count_dir, scores, max_player
+        is_dead, dead_counter, dead_count_dir, scores, max_player, level
     max_player = num_player
     current_player = 0
     credit -= max_player
-    player_lives = [start_player_lives, start_player_lives]
-    player_coords = [player_start, player_start]
+    level = [1, 1]
     move_mode = [MM_GRID, MM_SPEED_SLOW]
     fuse = [0, 0, 0, False]  # fuse hunts player, if he draws a line and stops[x,y,sleep_timer,visible]
     scores = [0, 0]
     max_qix = [1, 1]
     qix_coords = [[[], []], [[], []]]  # 2 qixes with x x/y coordinate of qix
+    player_lives = [start_player_lives, start_player_lives]
     for index in range(max_player):
-        reset_playfield(index)
         init_qix(index)
-        reset_sparx(index)
+        init_level(index)
     set_game_mode(GM_GAME)
     trigger_up = trigger_down = trigger_fast = fire_slow = fire_fast = up = down = left = right = is_dead = False
     dead_counter = calc_max_exploding_line_steps()
