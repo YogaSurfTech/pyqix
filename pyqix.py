@@ -33,10 +33,10 @@ GM_GAMEOVER = "game_over"
 GM_HIGHSCORE = "highscore"
 GM_HIGHSCORE_ENTRY = "highscore_entry"
 
-BLACK = FONT_NORMAL = 0
-WHITE = CENTER_X = FONT_LARGE = 1
-DARKGREY = CENTER_Y = FONT_SCORE = 2
-YELLOW = CENTER = 3
+BLACK = VIS_QIX = FONT_NORMAL = 0
+WHITE = VIS_SPARX = FONT_LARGE = CENTER_X = 1
+DARKGREY = VIS_FUSE = FONT_SCORE = CENTER_Y = 2
+YELLOW = VIS_STYX = CENTER = 3
 MIDRED = NO_BLIT = 4
 GREY = 5
 RED = 6
@@ -130,6 +130,8 @@ entry_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ 012345789<."
 entry_accumulator = 0
 trigger_up = trigger_down = trigger_fast = fire_slow = fire_fast = up = down = left = right = False
 credit = 0
+element_visibility = [False, False, False, False]  # tracks visibility of qix, sparks, fuse and styx
+element_movement = [False, False, False, False]  # tracks movement of qix, sparks, fuse and styx
 
 
 def hal_blt(img, coords):
@@ -815,6 +817,7 @@ def death_anim():
 
 
 def paint_highscore():
+    element_visibility[VIS_STYX] = False
     print_at("qix KICKERS", (84, 60), color[WHITE], center_flags=CENTER_X, anti_aliasing=0, use_font=FONT_LARGE)
     print_at("SCORE", (59, 90), color[WHITE], center_flags=0x00, anti_aliasing=0, use_font=FONT_LARGE)
     print_at("INITIALS", (147, 90), color[WHITE], center_flags=0x00, anti_aliasing=0, use_font=FONT_LARGE)
@@ -847,11 +850,12 @@ def paint_score():
 
 
 def paint_sparx():
-    for sparc in all_sparx:
-        sprites = sprt_sparx
-        if sparc[3]:
-            sprites = sprt_supersparx
-        show_sprite(sprites, sparc[:2])
+    if element_visibility[VIS_SPARX]:
+        for sparc in all_sparx:
+            sprites = sprt_sparx
+            if sparc[3]:
+                sprites = sprt_supersparx
+            show_sprite(sprites, sparc[:2])
 
 
 def paint_playerpath():
@@ -868,7 +872,7 @@ def paint_playerpath():
     if fuse_segment < len(players_path):
         hal_draw_line(players_path[fuse_segment - 1], fuse[:2], color[DARKGREY])
         hal_draw_line(fuse[:2], players_path[fuse_segment], color[idx])
-    if fuse[3]:  # paint fuse
+    if fuse[3] and element_visibility[VIS_FUSE]:  # paint fuse
         show_sprite(sprt_fuse, fuse[:2])
 
 
@@ -887,24 +891,26 @@ def paint_claimed_and_lives():
 
 
 def paint_qix():
-    for q in range(max_qix[current_player]):  # paint qixes
-        for qix in qix_coords[current_player][q]:
-            qix_lst = [(qix[0], qix[1]), (qix[2], qix[3])]
-            draw_list(qix_lst, qix[4], False)
+    if element_visibility[VIS_QIX]:
+        for q in range(max_qix[current_player]):  # paint qixes
+            for qix in qix_coords[current_player][q]:
+                qix_lst = [(qix[0], qix[1]), (qix[2], qix[3])]
+                draw_list(qix_lst, qix[4], False)
 
 
 def paint_player():
-    if is_dead:
-        death_anim()
-    else:
-        pos = player_coords[current_player]
-        player = [vector_add(pos, (-player_size, 0)), vector_add(pos, (0, player_size)),
-                  vector_add(pos, (player_size, 0)), vector_add(pos, (0, -player_size))]
-        draw_list(player, color[RED], True)
-        if X_SCALE > 1.0:
-            hal_draw_rect(vector_add(pos, (-1, -1)), vector_add(pos, (1, 1)), color[WHITE])
+    if element_visibility[VIS_STYX]:
+        if is_dead:
+            death_anim()
         else:
-            hal_draw_rect(pos, vector_add(pos, (1, 1)), color[WHITE])  # add 1 pixel (pygame draws a 3x3 box on w=0)
+            pos = player_coords[current_player]
+            player = [vector_add(pos, (-player_size, 0)), vector_add(pos, (0, player_size)),
+                      vector_add(pos, (player_size, 0)), vector_add(pos, (0, -player_size))]
+            draw_list(player, color[RED], True)
+            if X_SCALE > 1.0:
+                hal_draw_rect(vector_add(pos, (-1, -1)), vector_add(pos, (1, 1)), color[WHITE])
+            else:
+                hal_draw_rect(pos, vector_add(pos, (1, 1)), color[WHITE])  # add 1 pixel (pygame draws a 3x3 box on w=0)
 
 
 def paint_playfield():
@@ -1120,57 +1126,61 @@ def kill_player(qix_kill):
 
 
 def move_fuse():
-    if move_mode[0] != MM_GRID:  # handle fuse movement
-        play_sound('fuse')
-        if fuse[2] > fuse_sleep:  # TODO: add up time player is waiting on path
-            fuse[3] = True
-            fuse[0:2] = calc_vertex_from_1d_path(players_path, fuse[0:2], 1, close=False)
-            if vector_equal(fuse[0:2], player_coords[current_player]):  # fuse catches player!
-                kill_player(False)
-        else:
-            fuse[2] += SKIP_TICKS
+    if element_movement[VIS_FUSE]:
+        if move_mode[0] != MM_GRID:  # handle fuse movement
+            play_sound('fuse')
+            if fuse[2] > fuse_sleep:  # TODO: add up time player is waiting on path
+                fuse[3] = True
+                fuse[0:2] = calc_vertex_from_1d_path(players_path, fuse[0:2], 1, close=False)
+                if vector_equal(fuse[0:2], player_coords[current_player]):  # fuse catches player!
+                    kill_player(False)
+            else:
+                fuse[2] += SKIP_TICKS
 
 
 def move_qix():
     global frame_counter, qix_coords, point_of_death
-    if frame_counter % 3 == 0:  # handle qix movement
-        for q in range(max_qix[current_player]):
-            qix = qix_move(q)
-            qix.append(qix_change_color(q))
-            qix_coords[current_player][q] = qix_coords[current_player][q][1:]
-            qix_coords[current_player][q].append(qix)
-            if move_mode[0] != MM_GRID:
-                for line in qix_coords[current_player][q]:
-                    collision = check_line_vs_poly(line[:2], line[2:], players_path, close=False, sort=False)
-                    if len(collision) != 0:
-                        point_of_death = get_first_collision(collision)
-                        kill_player(True)
+    if element_movement[VIS_QIX]:
+        if frame_counter % 3 == 0:  # handle qix movement
+            for q in range(max_qix[current_player]):
+                qix = qix_move(q)
+                qix.append(qix_change_color(q))
+                qix_coords[current_player][q] = qix_coords[current_player][q][1:]
+                qix_coords[current_player][q].append(qix)
+                if move_mode[0] != MM_GRID:
+                    for line in qix_coords[current_player][q]:
+                        collision = check_line_vs_poly(line[:2], line[2:], players_path, close=False, sort=False)
+                        if len(collision) != 0:
+                            point_of_death = get_first_collision(collision)
+                            kill_player(True)
 
 
 def move_sparx():
-    for sparc in all_sparx:  # handle sparx movement
-        if sparc[4]:  # supersparc has found players path before so it follows it
-            sparc[0:2] = calc_vertex_from_1d_path(players_path, sparc[0:2], abs(sparc[2]), close=False)
-            if sparc[0:2] == player_coords[current_player]:  # supersparx catches player!
-                kill_player(False)
-                sparc[0:2] = players_path[0]  # for debug mode reset to path start
-        else:
-            old_val = sparc[0:2]
-            if len(sparc[5]) == 0:  # supersparc speed was flipped and is now in between old polys to find a way out
-                search_polys = [playfield[current_player]]
-                search_polys.extend(old_polys[current_player][::-1])
+    if element_movement[VIS_SPARX]:
+        for sparc in all_sparx:  # handle sparx movement
+            if sparc[4]:  # supersparc has found players path before so it follows it
+                sparc[0:2] = calc_vertex_from_1d_path(players_path, sparc[0:2], abs(sparc[2]), close=False)
+                if sparc[0:2] == player_coords[current_player]:  # supersparx catches player!
+                    kill_player(False)
+                    sparc[0:2] = players_path[0]  # for debug mode reset to path start
             else:
-                search_polys = [sparc[6]]
-            for single_poly in search_polys:
-                sparc[0:2] = calc_vertex_from_1d_path(single_poly, sparc[0:2], sparc[2], close=True)
-                if old_val != sparc[0:2]:
-                    delta_path = cut_path(single_poly, old_val, sparc[0:2], sparc[2])
-                    collision_with_player = find_intersect_index(delta_path, player_coords[current_player], close=False)
-                    if len(collision_with_player) != 0:
-                        kill_player(False)
-                    resume_supersparx_normal(delta_path, sparc)
-                    check_playerpath_supersparx(old_val, sparc)
-                    break
+                old_val = sparc[0:2]
+                if len(sparc[5]) == 0:  # supersparc speed was flipped and is now in between old polys to find a way out
+                    search_polys = [playfield[current_player]]
+                    search_polys.extend(old_polys[current_player][::-1])
+                else:
+                    search_polys = [sparc[6]]
+                for single_poly in search_polys:
+                    sparc[0:2] = calc_vertex_from_1d_path(single_poly, sparc[0:2], sparc[2], close=True)
+                    if old_val != sparc[0:2]:
+                        delta_path = cut_path(single_poly, old_val, sparc[0:2], sparc[2])
+                        collision_with_player = find_intersect_index(delta_path, player_coords[current_player],
+                                                                     close=False)
+                        if len(collision_with_player) != 0:
+                            kill_player(False)
+                        resume_supersparx_normal(delta_path, sparc)
+                        check_playerpath_supersparx(old_val, sparc)
+                        break
 
 
 def move_player(movement):
@@ -1504,7 +1514,8 @@ def init_level(index_player):
 def reset(num_player):
     global current_player, credit, player_lives, move_mode, fuse, max_qix, qix_coords, \
         trigger_up, trigger_down, trigger_fast, fire_slow, fire_fast, up, down, left, right, \
-        is_dead, dead_counter, dead_count_dir, scores, max_player, level
+        is_dead, dead_counter, dead_count_dir, scores, max_player, level,\
+        element_visibility, element_movement
     max_player = num_player
     current_player = 0
     credit -= max_player
@@ -1524,6 +1535,8 @@ def reset(num_player):
     dead_counter = calc_max_exploding_line_steps()
     dead_count_dir = -1
     is_dead = True
+    element_visibility = [True, True, True, True]
+    element_movement = [True, True, True, True]
     play_sound('spawn')
 
 
