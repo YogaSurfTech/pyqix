@@ -85,6 +85,9 @@ qix_min_change = 3
 qix_max_change = 15
 qix_min_speed = 1
 qix_max_speed = 10
+qix_rc = []  # remote control data for attractmode
+qix_rc_counter = 0
+qix_rc_index = 0
 qix_color_index = [0, 0]
 fuse_sleep = 1000  # time of players wait until fuse starts chasing the player in ms
 fuse = [0, 0, 0, False]  # fuse hunts player, if he draws a line and stops[x,y,sleep_counter,visible]
@@ -764,6 +767,8 @@ def tick_sparc_respawn():
 def qix_change_color(index):
     global qix_color_index
     qix_colors = [MIDRED, BLUE, GREEN]
+    if qix_rc is not None:
+        return qix_rc[qix_rc_index]["color"]
     if random.random() * 100 < 7:
         qix_color_index[index] = (qix_color_index[index] + 1) % len(qix_colors)
     return color[qix_colors[qix_color_index[index]]]
@@ -936,6 +941,20 @@ def read_wipe_node(regex_match):
     if regex_match.groups()[7] is not None:
         wipe_end = int(regex_match.groups()[7])
     return [paint_wipe, direction, duration * SKIP_TICKS, get_time(), wipe_start, wipe_end]
+
+
+def read_qixroute_node(regex_match):
+    retval = []  # (point1, v1, point2, v2, framecount, color)
+    # regex =r'(\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*,\s*\(\s*([\+\-]?\d+)\s*,\s*([\+\-]?\d+)\s*\)\s*;\s*\(\s*(\d+)\s*,
+    # \s*(\d+)\s*\)\s*,\s*\(\s*([\+\-]?\d+)\s*,\s*([\+\-]?\d+)\s*\)\s*(;)?)?\s*(RED|BLUE|GREEN|END)?\s*((\d+)\s
+    # [fF]rames)?'
+    color_2_index = {"BLUE": BLUE, "GREEN": GREEN, "RED": RED}
+    with open(os.path.join("data", regex_match.group(1)), ) as fp:
+        retval = json.load(fp)
+    for item in retval:
+        item["color"] = color[color_2_index[item["color"]]]
+    element_visibility[VIS_QIX] = element_movement[VIS_QIX] = True
+    init_qix(index_player=current_player, remote_control=retval)
 
 
 def text_attract(text, coords):
@@ -1344,7 +1363,7 @@ def generate_lines(center, width):
     return retval
 
 
-def kill_player(qix_kill):
+def kill_player(qix_kill=True):
     global is_dead, dead_count_dir, killed_by_qix, dead_bubbles
     play_sound("kill", 0)
     is_dead = True
@@ -1599,6 +1618,22 @@ def check_collisions(points_to_check):
     return pt1, pt2
 
 
+def qix_move_rc():
+    global qix_rc_counter, qix_rc_index
+    pt1 = [qix_coords[current_player][0][-1][0] + qix_rc[qix_rc_index]["v1"][0],
+           qix_coords[current_player][0][-1][1] + qix_rc[qix_rc_index]["v1"][1]]
+    pt2 = [qix_coords[current_player][0][-1][2] + qix_rc[qix_rc_index]["v2"][0],
+           qix_coords[current_player][0][-1][3] + qix_rc[qix_rc_index]["v2"][1]]
+    qix_rc_counter += 1
+    if qix_rc_counter == qix_rc[qix_rc_index]["framecount"]:
+        qix_rc_counter = 0
+        qix_rc_index += 1
+        if qix_rc_index == len(qix_rc):
+            qix_rc_index -= 1  # stay on last entry (for getting  color after return)
+            element_movement[VIS_QIX] = False  # disable move
+    return [pt1[0], pt1[1], pt2[0], pt2[1]]
+
+
 def qix_move(q):
     """
     Rules for qix movement:
@@ -1614,6 +1649,8 @@ def qix_move(q):
     :return: the final coordinates of new qix point
     """
     global qix_speed, qix_target, qix_change_counter
+    if qix_rc is not None:
+        return qix_move_rc()
     retval = []
     dx = abs(qix_coords[current_player][q][-1][0] - qix_coords[current_player][q][-1][2])
     dy = abs(qix_coords[current_player][q][-1][1] - qix_coords[current_player][q][-1][3])
@@ -1668,6 +1705,7 @@ def handle_attract_movement():
         "TXT": (r'TXT,\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*-\s*\(\s*(\d+),\s*(\d+)\s*\),\s*"(.+)"',
                 read_text_node, ADD_TO_BUFFER),
         "CLS": (r'', reset_playfield, DIRECT_CALL),
+        "KILL": (r'', kill_player, DIRECT_CALL),
         "DEL": (r'DEL,\s*\(\s*\"(.+?)\"\s*\)\.*', read_del_node, 0),
         "GO": (r'(GO|FAST|SLOW),\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\.*', read_goto_node, LEAVE_LOOP | ADD_TO_BUFFER),
         "SLOW": (r'(GO|FAST|SLOW),\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\.*', read_goto_node, LEAVE_LOOP | ADD_TO_BUFFER),
@@ -1680,6 +1718,7 @@ def handle_attract_movement():
         "INIT": (r'INIT\s*\(\s*(qix|sparx|fuse)\s*\)\.*', read_init_node, 0),
         "WAIT": (r'WAIT\s*\(\s*(sparx|fuse)\s*,\s*(\d+)\s*,\s*(\d+)\s*\).*',
                  read_wait_node, LEAVE_LOOP | ADD_TO_BUFFER),
+        "move_qix": (r'move_qix\((.+)\)', read_qixroute_node, LEAVE_LOOP)
 
     }
     if not attract_sleep:
@@ -1844,18 +1883,37 @@ def reset(num_player):
     play_sound('spawn')
 
 
-def init_qix(index_player):
-    global qix_coords, qix_speed
-    for q in range(max_qix[index_player]):
-        qix_speed[q] = [get_random_vector(15, 5), get_random_vector(15, 5)]
-        qix_coords[index_player][q] = []
-        for index in range(0, 7):
-            qix_coords[index_player][q].append(
-                [(GAME_WIDTH * 0.45) + index * qix_speed[q][0][0], (GAME_HEIGHT * 0.45) + index * qix_speed[q][0][1],
-                 (GAME_WIDTH * 0.45) + index * qix_speed[q][1][0], (GAME_HEIGHT * 0.45) + index * qix_speed[q][1][1],
-                 color[qix_color_index[q]]])
-            qix_change_color(q)
-        qix_speed[q] = [get_random_vector(15, 5), get_random_vector(15, 5)]
+def init_qix(index_player=-1, remote_control=None):
+    global qix_coords, qix_speed, qix_rc, qix_rc_counter, qix_rc_index
+    if index_player == -1:
+        index_player = current_player
+    if remote_control is None:
+        qix_rc = None
+        for q in range(max_qix[index_player]):
+            qix_speed[q] = [get_random_vector(15, 5), get_random_vector(15, 5)]
+            qix_coords[index_player][q] = []
+            for index in range(0, 7):
+                qix_coords[index_player][q].append(
+                    [(GAME_WIDTH * 0.45) + index * qix_speed[q][0][0],
+                     (GAME_HEIGHT * 0.45) + index * qix_speed[q][0][1],
+                     (GAME_WIDTH * 0.45) + index * qix_speed[q][1][0],
+                     (GAME_HEIGHT * 0.45) + index * qix_speed[q][1][1],
+                     color[qix_color_index[q]]])
+                qix_change_color(q)
+            qix_speed[q] = [get_random_vector(15, 5), get_random_vector(15, 5)]
+    else:
+        qix_rc = remote_control
+        qix_rc_counter = 0
+        qix_rc_index = 0
+        for q in range(max_qix[index_player]):
+            qix_speed[q] = [qix_rc[0]["v1"][0], qix_rc[0]["v1"][1],
+                            qix_rc[0]["v2"][0], qix_rc[0]["v2"][1]]
+            qix_coords[index_player][q] = []
+            for index in range(0, 7):
+                qix_coords[index_player][q].append(
+                    [qix_rc[0]["p1"][0], qix_rc[0]["p1"][1],
+                     qix_rc[0]["p2"][0], qix_rc[0]["p2"][1],
+                     qix_rc[0]["color"]])
 
 
 def init_attractmode():

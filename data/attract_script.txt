@@ -11,9 +11,11 @@
 # "GO" (x,y)moves your styx to given location
 # "SLOW" (x,y)creates slow roaming area by moving styx to location
 # "FAST" (x,y) creates Fast roaming area by moving styx to location
+# "KILL" kills Styx
 # "CLS" clears playfield
 # "INIT" (sparx|fuse) flips visibility of sparx and fuse
 # "WAIT" (sparx|fuse,x,y) wait on this scriptline until sparx/fuse reaches point
+# move_qix(json file) loads qix movement data and replays it frame-by-frame
 # Layout 1:
 CLS
 TXT, (72, 56)-(190,61), "COPYRIGHT 1981 BY"
@@ -74,9 +76,9 @@ wipe up (16 Frames) from 32 to 30
 Layout 6:
 TXT, (32,56)-(134, 61),"YOUR OPPONENTS:"
 sleep 68 Frames
+move_qix(qix1.json):
 sleep 140 Frames
 TXT, (150, 130)-(198,137), "THE qix"
-TXT, (160, 145)-(198,137), " not yet "
 sleep 40 Frames
 INIT(sparx)
 WAIT(sparx,240, 71)
@@ -112,6 +114,66 @@ INIT(fuse)
 wipe right (42 Frames)
 Layout 7:
 INIT(sparx)
+INIT(qix)
+CLS
+high_score_table
+sleep 300 Frames
+wipe right (55 frames)
+Layout 8 DemoGame:
+INIT(sparx)
+move_qix(qix2.json):
+X,(128, 239),
+sleep 135 Frames
+TXT, (143,209)-(204,215), "EVADE qix"
+FAST,(128, 189)
+FAST,(120, 189)
+FAST,(120, 239)
+DEL, ("EVADE qix")
+GO,(120, 189)
+FAST,(120, 141)
+FAST,(128, 141)
+FAST,(128, 189),
+GO,(128, 219)
+FAST,(140, 219)
+FAST,(140, 227)
+FAST,(128, 227)
+TXT, (144,220)-(218,224), "DODGE SPARX"
+GO,(140, 227)
+GO,(140, 219),
+FAST,(140, 153)
+FAST,(128, 153),
+DEL, ("DODGE SPARX")
+GO,(128,141)
+GO,(120,141),
+FAST,(68, 141),
+FAST,(68, 147)
+FAST,(120, 147),
+GO,(68, 147),
+SLOW,(16, 147),
+GO,(16, 39)
+GO,(114, 39),
+FAST,(114, 79)
+FAST,(102, 79)
+FAST,(102, 39),
+GO,(102, 79),
+SLOW,(102, 141)
+GO,(128,141)
+GO,(128,153),
+GO,(140, 153),
+SLOW,(213,153),
+FAST,(240, 153),
+GO,(174, 153),
+FAST,(174, 105)
+FAST,(168, 105)
+FAST,(168, 153),
+GO,(168, 105),
+FAST,(168, 58)
+KILL
+sleep 240 Frames
+INIT(sparx)
+INIT(qix)
+wipe right (42 Frames)
+Layout 7:
 CLS
 high_score_table
 sleep 300 Frames
