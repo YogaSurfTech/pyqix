@@ -32,6 +32,7 @@ GM_FILL = "fill_poly"
 GM_GAMEOVER = "game_over"
 GM_HIGHSCORE = "highscore"
 GM_HIGHSCORE_ENTRY = "highscore_entry"
+GM_ATTRACT_MODE = "attract_mode"
 
 BLACK = VIS_QIX = FONT_NORMAL = 0
 WHITE = VIS_SPARX = FONT_LARGE = CENTER_X = 1
@@ -816,6 +817,15 @@ def death_anim():
         dead_counter = calc_max_exploding_line_steps()
 
 
+def paint_attract_mode():
+    paint_playerpath()
+    paint_player()
+    paint_sparx()
+    paint_qix()
+    print_at("COPYRIGHT 1981 BY", (72, 56))
+    print_at("TAITO AMERICA CORP", (68, 64))
+
+
 def paint_highscore():
     element_visibility[VIS_STYX] = False
     print_at("qix KICKERS", (84, 60), color[WHITE], center_flags=CENTER_X, anti_aliasing=0, use_font=FONT_LARGE)
@@ -941,6 +951,11 @@ def paint_game():
         paint_player()
         paint_qix()
 
+    if GM_ATTRACT_MODE in [game_mode, enter_fill_poly.old_mode]:
+        print_at("CREDITS", (0, 22), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
+        print_at("%02i" % credit, (0, 29), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
+        paint_attract_mode()
+
     if game_mode == GM_LEVEL_ADVANCE:
         if paint_game.wait_counter == -1:  # waits for the wipe
             paint_game.wait_counter = frame_counter
@@ -989,7 +1004,7 @@ def paint_game():
         print_at("%02i" % credit, (0, 29), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
         paint_highscore()
         if (frame_counter - paint_game.wait_counter) > 2.5 * TPS:
-            set_game_mode(GM_GAMEOVER)
+            init_attractmode()
 
 
 def enter_fill_poly(candidate):
@@ -1417,10 +1432,17 @@ def qix_move(q):
     return retval
 
 
+def handle_attract_movement():
+    pass
+
+
 def handle_movement():
 
     global is_dead, dead_counter, dead_count_dir, pixel_amount, \
         entry_accumulator, new_highscore_entry, entry_index, highscore
+    if game_mode == GM_ATTRACT_MODE:
+        handle_attract_movement()
+
     if game_mode == GM_FILL:
         if get_time() > freeze_time:
             pixel_amount += current_poly_fillrate
@@ -1554,6 +1576,23 @@ def init_qix(index_player):
         qix_speed[q] = [get_random_vector(15, 5), get_random_vector(15, 5)]
 
 
+def init_attractmode():
+    global player_lives, scores, playfield, move_mode, max_qix, max_player, \
+        element_visibility, element_movement
+    max_player = 2
+    player_lives = [3, 3]
+    scores = [195654, 71280]
+    max_qix = [1, 1]
+    init_qix(0)
+    reset_playfield(0)
+    reset_sparx(0, player_pos=player_start)
+    move_mode = [MM_GRID, 0]
+    set_game_mode(GM_ATTRACT_MODE)
+    enter_fill_poly.old_mode = GM_ATTRACT_MODE
+    element_visibility = [False, False, False, False]
+    element_movement = [False, False, False, False]
+
+
 def init():
     global window_surface, screen, logo, fonts, game_over, active_live, inactive_live, player_lives, player_coords,\
         move_mode, fuse, sprt_fuse, sprt_sparx, sprt_supersparx, highscore, max_qix, qix_coords
@@ -1595,17 +1634,7 @@ def init():
             highscore = [(30000, "QIX") for i in range(10)]
     for name in ["background", "fuse", "fill_fast", "fill_slow", "kill", "spawn", "win"]:
         sfx_samples[name] = pygame.mixer.Sound(os.path.join('data', 'sfx', 'qix_' + name + '.wav'))
-    set_game_mode(GM_GAMEOVER)
-    reset_playfield(0)
-    player_lives = [start_player_lives, start_player_lives]
-    player_coords = [player_start, player_start]
-    move_mode = [MM_GRID, MM_SPEED_SLOW]
-    fuse = [0, 0, 0, False]  # fuse hunts player, if he draws a line and stops[x,y,sleep_timer,visible]
-    reset_sparx(0)
-    max_qix = [1, 1]
-    qix_coords = [[[], []], [[], []]]  # 2 qixes with x x/y coordinate of qix
-    init_qix(0)
-    init_qix(1)
+    init_attractmode()
 
 
 def play_sound(sfx_name, repeat=-1):
@@ -1666,10 +1695,10 @@ def release_key(key):
     if key == pygame.K_DOWN and pygame.K_UP not in pressed_keys:
         down = status
     if key == pygame.K_1:  # "1"-key
-        if credit > 0 and game_mode in [GM_GAMEOVER, GM_HIGHSCORE]:
+        if credit > 0 and game_mode in [GM_GAMEOVER, GM_HIGHSCORE, GM_ATTRACT_MODE]:
             reset(1)
     if key == pygame.K_2:  # "2"-key
-        if credit > 1 and game_mode in [GM_GAMEOVER, GM_HIGHSCORE]:
+        if credit > 1 and game_mode in [GM_GAMEOVER, GM_HIGHSCORE, GM_ATTRACT_MODE]:
             reset(2)
 
 
