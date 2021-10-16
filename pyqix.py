@@ -817,7 +817,7 @@ def death_anim():
             p1 = (pt_end[0] - deathray_prolong * d1 * index, pt_end[1] + deathray_prolong * d2 * index)
             p2 = (pt_end[0] + deathray_prolong * d1 * index, pt_end[1] - deathray_prolong * d2 * index)
             hal_draw_line(p1, p2, (255, 255, 255))
-    if dead_counter > max_count:  # all lines out of the screen?
+    if dead_counter > max_count and game_mode != GM_ATTRACT_MODE:  # all lines out of the screen?
         revive_player()
         killed_by_qix = False
         dead_counter = calc_max_exploding_line_steps()
@@ -836,6 +836,58 @@ def read_text_node(regex_match):
     y = int(regex_match.group(2))
     text = regex_match.group(5)
     return [text_attract, text, (x, y)]
+
+
+def read_del_node(regex_match):
+    text = regex_match.group(1)
+    for index in range(len(draw_buffer)):
+        t = draw_buffer[index]
+        if t is not None and len(t) == 3 and t[0] == text_attract and t[1] == text:
+            del draw_buffer[index]
+            break
+
+
+def get_direction(delta):
+    retval = ""
+    if delta[0] > 0:
+        retval = "right"
+    if delta[0] < 0:
+        retval = "left"
+    if delta[1] > 0:
+        retval = "down"
+    if delta[1] < 0:
+        retval = "up"
+    return retval
+
+
+def read_goto_node(regex_match):
+    global attract_sleep
+    speed = direction = None
+    mode = regex_match.group(1)
+    if mode == "SLOW":
+        speed = "slow"
+    if mode == "FAST":
+        speed = "fast"
+    vec_target = (int(regex_match.group(2)), int(regex_match.group(3)))
+    vec_delta = vector_sub(vec_target, player_coords[current_player])
+    direction = get_direction(vec_delta)
+    attract_sleep = True
+    return [move_styx, direction, speed, vec_target]
+
+
+def read_x_node(regex_match):
+    global dead_counter, dead_count_dir, is_dead, attract_sleep, move_mode
+    x = int(regex_match.group(1))
+    y = int(regex_match.group(2))
+    player_coords[current_player] = [x, y]
+    dead_counter = calc_max_exploding_line_steps()
+    dead_count_dir = -1
+    is_dead = True
+    play_sound('spawn')
+    element_visibility[VIS_STYX] = True
+    attract_sleep = True
+    move_mode[0] = MM_GRID
+    return [sleep, 1500]
 
 
 def read_sleep_node(regex_match):
@@ -867,6 +919,31 @@ def sleep(until):
         attract_sleep = False  # continue attract script
         return True
     return False
+
+
+def move_styx(direction, speed, target):
+    global up, down, right, left, fire_slow, fire_fast, attract_sleep, player_coords
+    up = down = right = left = fire_slow = fire_fast = False
+    if speed == "fast":
+        fire_fast = True
+    if speed == "slow":
+        fire_slow = True
+    if direction == "up":
+        up = True
+    if direction == "down":
+        down = True
+    if direction == "left":
+        left = True
+    if direction == "right":
+        right = True
+    if get_direction(vector_sub(target, player_coords[current_player])) != direction or direction == "":
+        attract_sleep = False
+        up = down = right = left = fire_slow = fire_fast = False
+        player_coords[current_player] = target
+        return True
+    else:
+        attract_sleep = True
+        return False
 
 
 def paint_attract_mode():
@@ -1156,7 +1233,8 @@ def exit_poly_fill():
     old_percentage = (playfield_area + new_poly_area) * 100 / complete
     new_percentage = playfield_area * 100 / complete
     bonus = int((old_percentage - new_percentage) * 100) * slow_multiplier
-    scores[current_player] += bonus
+    if game_mode != GM_ATTRACT_MODE:
+        scores[current_player] += bonus
     area_poly[current_player] = 100 - int(100 * abs(calc_area(playfield[current_player]))
                                           / abs(calc_area(new_playfield)))
     old_poly_colors[current_player].append(color[fill_color])
@@ -1164,7 +1242,7 @@ def exit_poly_fill():
     check_super_sparx_after_polysplit(players_path, all_sparx)
     move_mode[1] = None
     players_path = []
-    if area_poly[current_player] >= percentage_needed:
+    if area_poly[current_player] >= percentage_needed and game_mode != GM_ATTRACT_MODE:
         level[current_player] += 1
         set_game_mode(GM_LEVEL_ADVANCE)
         play_sound('', -1)
@@ -1184,7 +1262,7 @@ def revive_player():
     if player_lives[current_player] > 0:
         player_lives[current_player] -= 1
         reset_player_pos()
-    if game_mode == GM_GAME:
+    if game_mode != GM_ATTRACT_MODE:
         current_player = (current_player + 1) % max_player
     if player_lives[current_player] > 0:
         dead_count_dir = -1
@@ -1540,6 +1618,12 @@ def handle_attract_movement():
     tokens = {
         "TXT": (r'TXT,\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*-\s*\(\s*(\d+),\s*(\d+)\s*\),\s*"(.+)"',
                 read_text_node, ADD_TO_BUFFER),
+        "CLS": (r'', reset_playfield, DIRECT_CALL),
+        "DEL": (r'DEL,\s*\(\s*\"(.+?)\"\s*\)\.*', read_del_node, 0),
+        "GO": (r'(GO|FAST|SLOW),\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\.*', read_goto_node, LEAVE_LOOP | ADD_TO_BUFFER),
+        "SLOW": (r'(GO|FAST|SLOW),\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\.*', read_goto_node, LEAVE_LOOP | ADD_TO_BUFFER),
+        "FAST": (r'(GO|FAST|SLOW),\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\.*', read_goto_node, LEAVE_LOOP | ADD_TO_BUFFER),
+        "X": (r'X,\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\.*', read_x_node, LEAVE_LOOP | ADD_TO_BUFFER),  # returns a sleep cmd
         "high_score_table": (r'', paint_highscore, DIRECT_TO_BUFFER),
         "sleep": (r'sleep\s*(\d+).*', read_sleep_node,  LEAVE_LOOP | ADD_TO_BUFFER),  # returns sleep a method
         "wipe": (r'wipe (.+?) \((\d+) [Ff]rames\)\s*((from)\s+(\d+))?\s*((to)\s+(\d+))?',
@@ -1588,7 +1672,7 @@ def handle_movement():
     if game_mode == GM_FILL:
         if get_time() > freeze_time:
             pixel_amount += current_poly_fillrate
-    if game_mode == GM_HIGHSCORE_ENTRY:
+    elif game_mode == GM_HIGHSCORE_ENTRY:
         entry_accumulator += 1
         if entry_accumulator > TPS / 8 or trigger_down or trigger_up or trigger_fast:  # 1/4 second for letter updates
             entry_accumulator = direction = 0
@@ -1620,7 +1704,9 @@ def handle_movement():
             lst_entry = list(new_highscore_entry)
             lst_entry[entry_index] = entry_chars[current_index]
             new_highscore_entry = ''.join(lst_entry)
-    if game_mode == GM_GAME:
+    elif game_mode == GM_LEVEL_ADVANCE:
+        return
+    else:
         if is_dead:
             dead_counter += dead_count_dir * SKIP_TICKS
             if dead_counter <= 0:
@@ -1653,8 +1739,10 @@ def handle_movement():
                 move_qix()
 
 
-def reset_playfield(index_player):
+def reset_playfield(index_player=-1):
     global playfield, old_polys, old_poly_colors, players_path
+    if index_player < 0:
+        index_player = current_player
     playfield[index_player] = new_playfield
     old_polys[index_player] = []  # the polys which were the borders before (need for sparx movement)
     old_poly_colors[index_player] = []  # the colors of the polys (fast or slow)
@@ -1662,8 +1750,7 @@ def reset_playfield(index_player):
 
 
 def init_level(index_player):
-    global playfield, old_polys, old_poly_colors, players_path, max_qix, area_poly, dead_counter, move_mode, \
-        dead_count_dir, dead_counter, is_dead
+    global playfield, old_polys, old_poly_colors, players_path, max_qix, area_poly, move_mode
     reset_playfield(index_player)
     player_coords[index_player] = player_start
     reset_sparx(index_player)
@@ -1791,7 +1878,8 @@ def play_sound(sfx_name, repeat=-1):
             sfx_samples[sfx_current_playing].stop()
         sfx_current_playing = sfx_name
         if sfx_current_playing != '':
-            sfx_samples[sfx_current_playing].play(repeat)
+            if sfx_name != 'background' or game_mode != GM_ATTRACT_MODE:
+                sfx_samples[sfx_current_playing].play(repeat)
 
 
 def press_key(key):
@@ -1800,18 +1888,19 @@ def press_key(key):
         pressed_keys.append(key)
     if key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN]:
         left = right = up = down = False
-    if key == pygame.K_LEFT and pygame.K_RIGHT not in pressed_keys:
-        left = True
-    if key == pygame.K_RIGHT and pygame.K_LEFT not in pressed_keys:
-        right = True
-    if key == pygame.K_UP and pygame.K_DOWN not in pressed_keys:
-        up = trigger_up = True
-    if key == pygame.K_DOWN and pygame.K_UP not in pressed_keys:
-        down = trigger_down = True
-    if key == pygame.K_LALT:
-        fire_slow = True
-    if key == pygame.K_LCTRL:
-        fire_fast = trigger_fast = True
+    if game_mode != GM_ATTRACT_MODE:
+        if key == pygame.K_LEFT and pygame.K_RIGHT not in pressed_keys:
+            left = True
+        if key == pygame.K_RIGHT and pygame.K_LEFT not in pressed_keys:
+            right = True
+        if key == pygame.K_UP and pygame.K_DOWN not in pressed_keys:
+            up = trigger_up = True
+        if key == pygame.K_DOWN and pygame.K_UP not in pressed_keys:
+            down = trigger_down = True
+        if key == pygame.K_LALT:
+            fire_slow = True
+        if key == pygame.K_LCTRL:
+            fire_fast = trigger_fast = True
     if key == pygame.K_5:
         credit += 1
     if key == pygame.K_6:
@@ -1825,22 +1914,23 @@ def release_key(key):
     if key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN]:
         pressed_keys.remove(key)
     status = False
-    if key == pygame.K_LALT:
-        fire_slow = status
-    if key == pygame.K_LCTRL:
-        fire_fast = status
-    if len(pressed_keys) > 0:
-        status = True
-        key = pressed_keys[-1]
-    left = right = up = down = False
-    if key == pygame.K_LEFT and pygame.K_RIGHT not in pressed_keys:
-        left = status
-    if key == pygame.K_RIGHT and pygame.K_LEFT not in pressed_keys:
-        right = status
-    if key == pygame.K_UP and pygame.K_DOWN not in pressed_keys:
-        up = status
-    if key == pygame.K_DOWN and pygame.K_UP not in pressed_keys:
-        down = status
+    if game_mode != GM_ATTRACT_MODE:
+        if key == pygame.K_LALT:
+            fire_slow = status
+        if key == pygame.K_LCTRL:
+            fire_fast = status
+        if len(pressed_keys) > 0:
+            status = True
+            key = pressed_keys[-1]
+        left = right = up = down = False
+        if key == pygame.K_LEFT and pygame.K_RIGHT not in pressed_keys:
+            left = status
+        if key == pygame.K_RIGHT and pygame.K_LEFT not in pressed_keys:
+            right = status
+        if key == pygame.K_UP and pygame.K_DOWN not in pressed_keys:
+            up = status
+        if key == pygame.K_DOWN and pygame.K_UP not in pressed_keys:
+            down = status
     if key == pygame.K_1:  # "1"-key
         if credit > 0 and game_mode in [GM_GAMEOVER, GM_HIGHSCORE, GM_ATTRACT_MODE]:
             reset(1)

@@ -2,15 +2,74 @@
 # "#" obvious comment :)
 # file needs to end with an empty line or a comment
 # "TXT" Text with two coordinates and a string to print
+# "DEL" removes a text again
 # wipe up|left|down|right [limit] wipes screen in given number of frames
 #                          clean the buffer afterwards
 # high_score_table displays high score table
 # sleep given number of frames until continue on next line
+# "X" (x,y) starts styx at given location (with start animation)
+# "GO" (x,y)moves your styx to given location
+# "SLOW" (x,y)creates slow roaming area by moving styx to location
+# "FAST" (x,y) creates Fast roaming area by moving styx to location
+# "CLS" clears playfield
 # Layout 1:
+CLS
 TXT, (72, 56)-(190,61), "COPYRIGHT 1981 BY"
 TXT, (68, 64)-(193,69), "TAITO AMERICA CORP"
-sleep 240
+# (Stix Reanimate)
+X,(128, 239),
+TXT, (90, 190)-(166,195), "YOUR MARKER"
+TXT, (76, 204)-(180,209), "CONTROLLED WITH"
+TXT, (100, 211)-(155,216), "JOYSTICK"
+sleep 195
+GO,(64, 239),
+wipe up (16 Frames) from 3 to 30
+# Layout 2:
+TXT, (72, 56)-(190,61), "COPYRIGHT 1981 BY"
+TXT, (68, 64)-(193,69), "TAITO AMERICA CORP"
+TXT, (86, 106)-(169,111), "TO DRAW STIX"
+TXT, (111, 131)-(145,136), "PRESS"
+TXT, (86, 141)-(169,146), "FAST OR SLOW"
+sleep 73 Frames
+FAST,(64, 208)
+FAST,(108, 208)
+TXT, (74, 195)-(100,200), "STIX"
+sleep 97 frames
+DEL, ("STIX")
+FAST, (108, 239)
+sleep 17 Frames
+wipe up (16 Frames)  from 32 to 30
+# Layout 3:
+TXT, (72, 56)-(190,61), "COPYRIGHT 1981 BY"
+TXT, (68, 64)-(193,69), "TAITO AMERICA CORP"
+TXT, (97, 114)-(173,119), "CLAIM AREAS"
+TXT, (100, 124)-(169,129), "BY JOINING"
+TXT, (83, 134)-(187,139), "WALLS WITH STIX"
+GO,(151, 239)
+sleep 17 Frames
+SLOW,(151, 208)
+SLOW,(193, 208)
+SLOW,(193, 239)
+wipe up (16 Frames)  from 32 to 30
+# Layout 4:
+TXT, (72, 56)-(190,61), "COPYRIGHT 1981 BY"
+TXT, (68, 64)-(193,69), "TAITO AMERICA CORP"
+TXT, (60, 154)-(199,159), "SCORES BASED ON AREA"
+TXT, (53, 184)-(121,189), "FAST SCORE"
+TXT, (139, 184)-(207,189), "SLOW SCORE"
+TXT, (78, 191)-(97,196), "250"
+TXT, (164, 191)-(183,196), "500"
+sleep 193 Frames
 wipe up (16 Frames) from 32 to 30
+# Layout 5:
+TXT, (72, 56)-(190,61), "COPYRIGHT 1981 BY"
+TXT, (68, 64)-(193,69), "TAITO AMERICA CORP"
+TXT, (76, 114)-(180,119), "CLAIM MORE THAN"
+TXT, (73, 124)-(184,129), "75% OF PLAYFIELD"
+TXT, (70, 134)-(188,139), "FOR SPECIAL BONUS"
+sleep 173 Frames
+wipe up (16 Frames) from 32 to 30
+CLS
 high_score_table
 sleep 240
 wipe right (55 frames)
