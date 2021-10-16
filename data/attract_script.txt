@@ -12,6 +12,8 @@
 # "SLOW" (x,y)creates slow roaming area by moving styx to location
 # "FAST" (x,y) creates Fast roaming area by moving styx to location
 # "CLS" clears playfield
+# "INIT" (sparx|fuse) flips visibility of sparx and fuse
+# "WAIT" (sparx|fuse,x,y) wait on this scriptline until sparx/fuse reaches point
 # Layout 1:
 CLS
 TXT, (72, 56)-(190,61), "COPYRIGHT 1981 BY"
@@ -69,7 +71,48 @@ TXT, (73, 124)-(184,129), "75% OF PLAYFIELD"
 TXT, (70, 134)-(188,139), "FOR SPECIAL BONUS"
 sleep 173 Frames
 wipe up (16 Frames) from 32 to 30
+Layout 6:
+TXT, (32,56)-(134, 61),"YOUR OPPONENTS:"
+sleep 68 Frames
+sleep 140 Frames
+TXT, (150, 130)-(198,137), "THE qix"
+TXT, (160, 145)-(198,137), " not yet "
+sleep 40 Frames
+INIT(sparx)
+WAIT(sparx,240, 71)
+TXT, (171, 68)-(218, 73), "<SPARX>"
+GO,(193, 208),
+FAST,(193, 183)
+INIT(fuse)
+sleep 2 Frames
+FAST,(193, 180)
+FAST,(32, 180)
+TXT, (84, 187)-(139,192),"THE FUSE"
+sleep 65 Frames
+WAIT(fuse,59, 180)
+INIT(fuse)
+FAST,(32,120)
+FAST, (64,120)
+FAST,(64, 147)
+FAST, (40, 147)
+FAST,(40, 126)
+FAST,(60, 126)
+FAST, (60,143)
+FAST, (48, 143)
+FAST,(48, 133)
+FAST, (52, 133)
+FAST,(52, 141)
+FAST,(50, 141)
+INIT(fuse)
+TXT, (32,90)-(72, 95),"SPIRAL"
+TXT, (35,97)-(68, 102),"DEATH"
+TXT, (39,104)-(65, 109),"TRAP"
+sleep 400 Frames
+INIT(fuse)
+wipe right (42 Frames)
+Layout 7:
+INIT(sparx)
 CLS
 high_score_table
-sleep 240
+sleep 300 Frames
 wipe right (55 frames)

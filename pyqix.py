@@ -823,6 +823,18 @@ def death_anim():
         dead_counter = calc_max_exploding_line_steps()
 
 
+def extract_game_element(regex_match):
+    item = regex_match.group(1)
+    index = VIS_QIX
+    if item == "qix":
+        index = VIS_QIX
+    if item == "sparx":
+        index = VIS_SPARX
+    if item == "fuse":
+        index = VIS_FUSE
+    return index
+
+
 def extract_node(script_line, funct, regex):
     regex = re.compile(regex)
     result = regex.match(script_line)
@@ -845,6 +857,24 @@ def read_del_node(regex_match):
         if t is not None and len(t) == 3 and t[0] == text_attract and t[1] == text:
             del draw_buffer[index]
             break
+
+
+def read_wait_node(regex_match):
+    item = regex_match.group(1)
+    x = int(regex_match.group(2))
+    y = int(regex_match.group(3))
+    return [script_wait, item, [x, y]]
+
+
+def read_init_node(regex_match):
+    global element_visibility, element_movement
+    index = extract_game_element(regex_match)
+    if index == VIS_QIX:
+        init_qix(index_player=current_player)
+    if index == VIS_SPARX:
+        reset_sparx(current_player, player_pos=player_start)
+    element_visibility[index] = not element_visibility[index]
+    element_movement[index] = element_visibility[index]
 
 
 def get_direction(delta):
@@ -919,6 +949,25 @@ def sleep(until):
         attract_sleep = False  # continue attract script
         return True
     return False
+
+
+def script_wait(entity, position):
+    global attract_sleep, all_sparx, fuse
+    entity_pos = [0, 0]
+    if entity == "fuse":
+        entity_pos = fuse[:2]
+    if entity == "sparx":
+        entity_pos = all_sparx[0][:2]
+    if vector_equal(entity_pos, position, epsilon=2.5):  # TODO: is not exact
+        if entity == "sparx":
+            all_sparx[0][2] = all_sparx[1][2] = 0   # if target reached, set speed = 0
+        if entity == "fuse":
+            fuse[2] = fuse_sleep * 0.95    # if target reached, set wait time to 95%
+        attract_sleep = False
+        return True
+    else:
+        attract_sleep = True
+        return False
 
 
 def move_styx(direction, speed, target):
@@ -1628,6 +1677,10 @@ def handle_attract_movement():
         "sleep": (r'sleep\s*(\d+).*', read_sleep_node,  LEAVE_LOOP | ADD_TO_BUFFER),  # returns sleep a method
         "wipe": (r'wipe (.+?) \((\d+) [Ff]rames\)\s*((from)\s+(\d+))?\s*((to)\s+(\d+))?',
                  read_wipe_node,  LEAVE_LOOP | ADD_TO_BUFFER),
+        "INIT": (r'INIT\s*\(\s*(qix|sparx|fuse)\s*\)\.*', read_init_node, 0),
+        "WAIT": (r'WAIT\s*\(\s*(sparx|fuse)\s*,\s*(\d+)\s*,\s*(\d+)\s*\).*',
+                 read_wait_node, LEAVE_LOOP | ADD_TO_BUFFER),
+
     }
     if not attract_sleep:
         while True:
