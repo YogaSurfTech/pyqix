@@ -1,0 +1,16 @@
+# syntax definition:
+# "#" obvious comment :)
+# file needs to end with an empty line or a comment
+# "TXT" Text with two coordinates and a string to print
+# wipe up|left|down|right [limit] wipes screen in given number of frames
+#                          clean the buffer afterwards
+# high_score_table displays high score table
+# sleep given number of frames until continue on next line
+# Layout 1:
+TXT, (72, 56)-(190,61), "COPYRIGHT 1981 BY"
+TXT, (68, 64)-(193,69), "TAITO AMERICA CORP"
+sleep 240
+wipe up (16 Frames) from 32 to 30
+high_score_table
+sleep 240
+wipe right (55 frames)

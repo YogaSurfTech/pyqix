@@ -1,5 +1,6 @@
 import os
 import json
+import re
 
 import pygame
 from pygame.locals import *
@@ -131,6 +132,11 @@ entry_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ 012345789<."
 entry_accumulator = 0
 trigger_up = trigger_down = trigger_fast = fire_slow = fire_fast = up = down = left = right = False
 credit = 0
+attract_file = os.path.join('data', 'attract_script.txt')
+attract_script = []  # contents of the attract script
+draw_buffer = []  # keeps the content of the screen for several frames
+attract_index = 0  # current line of processed attractmode script
+attract_sleep = False  # pause attract mode script until False
 element_visibility = [False, False, False, False]  # tracks visibility of qix, sparks, fuse and styx
 element_movement = [False, False, False, False]  # tracks movement of qix, sparks, fuse and styx
 
@@ -817,13 +823,106 @@ def death_anim():
         dead_counter = calc_max_exploding_line_steps()
 
 
+def extract_node(script_line, funct, regex):
+    regex = re.compile(regex)
+    result = regex.match(script_line)
+    if result is not None:
+        return funct(result)
+    return None
+
+
+def read_text_node(regex_match):
+    x = int(regex_match.group(1))
+    y = int(regex_match.group(2))
+    text = regex_match.group(5)
+    return [text_attract, text, (x, y)]
+
+
+def read_sleep_node(regex_match):
+    global attract_sleep
+    until = get_time() + int(regex_match.group(1)) * SKIP_TICKS
+    attract_sleep = True
+    return [sleep, until]
+
+
+def read_wipe_node(regex_match):
+    direction = regex_match.group(1)
+    duration = int(regex_match.group(2))
+    wipe_start = wipe_end = 0
+    if regex_match.groups()[4] is not None:
+        wipe_start = int(regex_match.groups()[4])
+    if regex_match.groups()[7] is not None:
+        wipe_end = int(regex_match.groups()[7])
+    return [paint_wipe, direction, duration * SKIP_TICKS, get_time(), wipe_start, wipe_end]
+
+
+def text_attract(text, coords):
+    print_at(text, coords, use_font=FONT_NORMAL)
+    return False
+
+
+def sleep(until):
+    global attract_sleep
+    if get_time() > until:
+        attract_sleep = False  # continue attract script
+        return True
+    return False
+
+
 def paint_attract_mode():
+    global draw_buffer
     paint_playerpath()
     paint_player()
     paint_sparx()
     paint_qix()
-    print_at("COPYRIGHT 1981 BY", (72, 56))
-    print_at("TAITO AMERICA CORP", (68, 64))
+    remove_indexes = []
+    for index in range(len(draw_buffer)):
+        elem = None
+        if index < len(draw_buffer):  # wipe will clear the draw_buffer therefore we need to check
+            elem = draw_buffer[index]
+        if elem is not None:
+            if len(elem) == 1:
+                elem[0]()
+            else:
+                if elem[0](*elem[1:]):
+                    remove_indexes.append(index)
+    if len(draw_buffer) > 0:
+        remove_indexes.reverse()
+        for index in remove_indexes:
+            del draw_buffer[index]
+
+
+def paint_wipe(direction, duration, start_time, arg_start, arg_end, fullscreen=False):
+    global attract_sleep, draw_buffer
+    retval = False
+    progress = (get_time() - start_time) / float(duration)
+    if progress >= 1:
+        attract_sleep = False
+        draw_buffer = []
+        retval = True
+    else:
+        attract_sleep = True
+    rect = new_playfield
+    rect = [[rect[0][0] + 1, rect[0][1] + 1], [rect[2][0] - 1, rect[2][1] - 1]]
+    if fullscreen:
+        rect = [[0, 0], [GAME_WIDTH, GAME_HEIGHT]]
+        arg_start = arg_end = 0
+    dx = (rect[1][0] - rect[0][0] - arg_start - arg_end) * progress
+    dy = (rect[1][1] - rect[0][1] - arg_start - arg_end) * progress
+    if direction == "up":
+        rect[1][1] = rect[1][1] - arg_start
+        rect[0][1] = rect[1][1] - dy
+    if direction == "down":
+        rect[0][1] = rect[0][1] + arg_start
+        rect[1][1] = rect[0][1] + dy
+    if direction == "left":
+        rect[1][0] = rect[1][0] - arg_start
+        rect[0][0] = rect[1][0] - dx
+    if direction == "right":
+        rect[1][0] = rect[1][0] + arg_start
+        rect[1][0] = rect[0][0] + dx
+    hal_draw_rect(rect[0], rect[1], color[BLACK])
+    return retval
 
 
 def paint_highscore():
@@ -1433,7 +1532,50 @@ def qix_move(q):
 
 
 def handle_attract_movement():
-    pass
+    leave_loop = False
+    DIRECT_CALL = 1       # the function will directly be called and not put into the buffer
+    ADD_TO_BUFFER = 2     # the return value is added to the display buffer
+    LEAVE_LOOP = 4        # after processing this line, the script will leave the read loop
+    DIRECT_TO_BUFFER = 8  # the function should be directly added to display buffer
+    tokens = {
+        "TXT": (r'TXT,\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*-\s*\(\s*(\d+),\s*(\d+)\s*\),\s*"(.+)"',
+                read_text_node, ADD_TO_BUFFER),
+        "high_score_table": (r'', paint_highscore, DIRECT_TO_BUFFER),
+        "sleep": (r'sleep\s*(\d+).*', read_sleep_node,  LEAVE_LOOP | ADD_TO_BUFFER),  # returns sleep a method
+        "wipe": (r'wipe (.+?) \((\d+) [Ff]rames\)\s*((from)\s+(\d+))?\s*((to)\s+(\d+))?',
+                 read_wipe_node,  LEAVE_LOOP | ADD_TO_BUFFER),
+    }
+    if not attract_sleep:
+        while True:
+            script_line = next_scriptline()
+            if not script_line.startswith("#"):
+                for token_id in tokens.keys():
+                    if script_line.startswith(token_id):
+                        regex = tokens[token_id][0]
+                        function = tokens[token_id][1]
+                        flags = tokens[token_id][2]
+                        if flags & LEAVE_LOOP:
+                            leave_loop = True
+                        if flags & DIRECT_CALL:
+                            function()
+                        elif flags & DIRECT_TO_BUFFER:
+                            draw_buffer.append([function])
+                        else:
+                            retval = extract_node(script_line, function, regex)
+                            if flags & ADD_TO_BUFFER:
+                                draw_buffer.append(retval)
+                        break
+            if leave_loop:
+                break
+
+
+def next_scriptline():
+    global attract_index
+    script_line = attract_script[attract_index].strip()
+    attract_index += 1
+    if attract_index >= len(attract_script):
+        init_attractmode()
+    return script_line
 
 
 def handle_movement():
@@ -1577,8 +1719,9 @@ def init_qix(index_player):
 
 
 def init_attractmode():
-    global player_lives, scores, playfield, move_mode, max_qix, max_player, \
-        element_visibility, element_movement
+    global player_lives, scores, move_mode, max_qix, max_player, \
+        attract_sleep, attract_index, element_visibility, element_movement, draw_buffer
+    draw_buffer = []
     max_player = 2
     player_lives = [3, 3]
     scores = [195654, 71280]
@@ -1589,13 +1732,15 @@ def init_attractmode():
     move_mode = [MM_GRID, 0]
     set_game_mode(GM_ATTRACT_MODE)
     enter_fill_poly.old_mode = GM_ATTRACT_MODE
+    attract_index = 0
+    attract_sleep = False
     element_visibility = [False, False, False, False]
     element_movement = [False, False, False, False]
 
 
 def init():
     global window_surface, screen, logo, fonts, game_over, active_live, inactive_live, player_lives, player_coords,\
-        move_mode, fuse, sprt_fuse, sprt_sparx, sprt_supersparx, highscore, max_qix, qix_coords
+        move_mode, fuse, sprt_fuse, sprt_sparx, sprt_supersparx, highscore, max_qix, qix_coords, attract_script
     pygame.init()
     pygame.mixer.init()
     window_surface = pygame.display.set_mode([WINDOW_WIDTH, WINDOW_HEIGHT])
@@ -1634,6 +1779,8 @@ def init():
             highscore = [(30000, "QIX") for i in range(10)]
     for name in ["background", "fuse", "fill_fast", "fill_slow", "kill", "spawn", "win"]:
         sfx_samples[name] = pygame.mixer.Sound(os.path.join('data', 'sfx', 'qix_' + name + '.wav'))
+    with open(attract_file) as fp:
+        attract_script = fp.readlines()
     init_attractmode()
 
 
