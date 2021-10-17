@@ -142,6 +142,7 @@ attract_index = 0  # current line of processed attractmode script
 attract_sleep = False  # pause attract mode script until False
 element_visibility = [False, False, False, False]  # tracks visibility of qix, sparks, fuse and styx
 element_movement = [False, False, False, False]  # tracks movement of qix, sparks, fuse and styx
+start_game_wipe = 0  # signaling a starting game during the wipe
 
 
 def hal_blt(img, coords):
@@ -231,7 +232,7 @@ def vector_equal(v1, v2, epsilon=0.00001):
 def set_game_mode(mode):
     global game_mode
     game_mode = mode
-    paint_game.wait_counter = -1
+    paint_game.wait_counter = paint_game.start_time = -1
 
 
 def init_stepwise_poly(arg_poly):
@@ -1038,12 +1039,15 @@ def paint_attract_mode():
 
 
 def paint_wipe(direction, duration, start_time, arg_start, arg_end, fullscreen=False):
-    global attract_sleep, draw_buffer
+    global attract_sleep, draw_buffer, start_game_wipe
     retval = False
     progress = (get_time() - start_time) / float(duration)
     if progress >= 1:
         attract_sleep = False
         draw_buffer = []
+        if start_game_wipe != 0:
+            reset(start_game_wipe)
+            start_game_wipe = 0
         retval = True
     else:
         attract_sleep = True
@@ -1203,25 +1207,33 @@ def paint_game():
     if game_mode == GM_LEVEL_ADVANCE:
         if paint_game.wait_counter == -1:  # waits for the wipe
             paint_game.wait_counter = frame_counter
+            paint_game.start_time = get_time()  # stores the start time of the wipe
         frames = frame_counter - paint_game.wait_counter
         paint_claimed_and_lives()
-        reset_playfield(current_player)
-        paint_playfield()
-        bonus = (area_poly[current_player] - percentage_needed) * 1000
-        if bonus < 0:
-            bonus = 0
-        print_at("PERCENTAGE", (80, 90))
-        print_at("THRESHOLD", (80, 100))
-        print_at("BONUS", (80, 110))
-        print_at(str(area_poly[current_player]) + "%", (157, 90))
-        print_at(str(percentage_needed) + "%", (157, 100))
-        print_at(str(area_poly[current_player] - percentage_needed) + " X 1000", (157, 110))
-        print_at(str(bonus), (115, 130))
-        if frames > 230:
-            scores[current_player] += bonus
-            set_game_mode(GM_GAME)
-            init_level(current_player)
-            play_sound('background')
+        if frames < 75 and paint_game.start_time != -1:
+            if paint_wipe("right", 50 * SKIP_TICKS, paint_game.start_time, 0, 0):
+                paint_game.start_time = -1
+                reset_playfield(current_player)
+        else:
+            paint_playfield()
+            bonus = (area_poly[current_player] - percentage_needed) * 1000
+            if bonus < 0:
+                bonus = 0
+            print_at("PERCENTAGE", (80, 90))
+            print_at("THRESHOLD", (80, 100))
+            print_at("BONUS", (80, 110))
+            print_at(str(area_poly[current_player]) + "%", (157, 90))
+            print_at(str(percentage_needed) + "%", (157, 100))
+            print_at(str(area_poly[current_player] - percentage_needed) + " X 1000", (157, 110))
+            print_at(str(bonus), (115, 130))
+            if frames > 230:
+                if paint_game.start_time == -1:
+                    paint_game.start_time = get_time()
+                if paint_wipe("up", 50 * SKIP_TICKS, paint_game.start_time, 0, 0):
+                    scores[current_player] += bonus
+                    set_game_mode(GM_GAME)
+                    init_level(current_player)
+                    play_sound('background')
     if game_mode == GM_GAMEOVER:
         if paint_game.wait_counter == -1:
             paint_game.wait_counter = frame_counter
@@ -1231,8 +1243,11 @@ def paint_game():
         hal_blt(game_over, game_over_coord)
         play_sound('')
         if (frame_counter - paint_game.wait_counter) > 2.5 * TPS:
-            reset_playfield(current_player)
-            set_game_mode(GM_HIGHSCORE_ENTRY)
+            if paint_game.start_time == -1:
+                paint_game.start_time = get_time()
+            if paint_wipe("right", 45 * SKIP_TICKS, paint_game.start_time, 0, 0):
+                reset_playfield(current_player)
+                set_game_mode(GM_HIGHSCORE_ENTRY)
     if game_mode == GM_HIGHSCORE_ENTRY:
         paint_claimed_and_lives()
         if scores[current_player] > highscore[-1][0]:
@@ -1248,7 +1263,10 @@ def paint_game():
         print_at("%02i" % credit, (0, 29), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
         paint_highscore()
         if (frame_counter - paint_game.wait_counter) > 2.5 * TPS:
-            init_attractmode()
+            if paint_game.start_time == -1:
+                paint_game.start_time = get_time()
+            if paint_wipe("up", 45 * SKIP_TICKS, paint_game.start_time, 0, 0):
+                init_attractmode()
 
 
 def enter_fill_poly(candidate):
@@ -1721,7 +1739,7 @@ def handle_attract_movement():
         "move_qix": (r'move_qix\((.+)\)', read_qixroute_node, LEAVE_LOOP)
 
     }
-    if not attract_sleep:
+    if not attract_sleep and start_game_wipe == 0:  # do not process more events if start_game_wipe was set
         while True:
             script_line = next_scriptline()
             if not script_line.startswith("#"):
@@ -1829,6 +1847,13 @@ def handle_movement():
                 player_coords[current_player] = candidate
                 move_sparx()
                 move_qix()
+
+
+def start_game_anim(player_count):
+    global element_movement, start_game_wipe
+    element_movement = [False, False, False, False]  # stop everything
+    start_game_wipe = player_count
+    draw_buffer.append([paint_wipe, "right", 15 * SKIP_TICKS, get_time(), 0, 0, True])
 
 
 def reset_playfield(index_player=-1):
@@ -2043,11 +2068,11 @@ def release_key(key):
         if key == pygame.K_DOWN and pygame.K_UP not in pressed_keys:
             down = status
     if key == pygame.K_1:  # "1"-key
-        if credit > 0 and game_mode in [GM_GAMEOVER, GM_HIGHSCORE, GM_ATTRACT_MODE]:
-            reset(1)
+        if credit > 0 and game_mode == GM_ATTRACT_MODE:
+            start_game_anim(1)
     if key == pygame.K_2:  # "2"-key
-        if credit > 1 and game_mode in [GM_GAMEOVER, GM_HIGHSCORE, GM_ATTRACT_MODE]:
-            reset(2)
+        if credit > 1 and game_mode == GM_ATTRACT_MODE:
+            start_game_anim(2)
 
 
 def gameloop():  # https://dewitters.com/dewitters-gameloop/
