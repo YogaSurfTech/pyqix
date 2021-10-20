@@ -19,12 +19,23 @@ SKIP_TICKS = 1000 / TPS  # ms to start skipping frames
 MAX_FRAMESKIP = 5  # no we calc max updates (if we are behind) before displaying
 MAX_TIMESKIP = 2000  # max Time we try to catch up until we just reset counter
 
+MM_GRID = "grid"         # MoveModes
+MM_SPEED_FAST = "fast"
+MM_SPEED_SLOW = "slow"
+MM_VERTICAL = "free_vertical"
+MM_HORIZONTAL = "free_horizontal"
+
 BLACK = FONT_NORMAL = 0
 WHITE = CENTER_X = FONT_LARGE = 1
 DARKGREY = CENTER_Y = FONT_SCORE = 2
 YELLOW = CENTER = 3
 MIDRED = NO_BLIT = 4
+GREY = 5
 RED = 6
+BLUE = 7
+GREEN = 8
+DARKRED = 9
+CYAN = 10
 
 fonts = None
 screen = None
@@ -45,14 +56,17 @@ player_coords = [[], []]  # an  x/y coordinate
 player_lives = [0, 0]  # num lives of both players
 scores = [0, 0]
 # ---------------------
+players_path = []  # the path the player will draw on screen
 player_size = 3.0
 player_start = [128, 239]
+half_frame_rate = False
 pressed_keys = []  # sequence of pressed keys and current state
 new_playfield = [(16, 39), (16, 239), (240, 239), (240, 39)]
 start_player_lives = 3
+move_mode = []  # holds state and sub_state(for movement) of the general game
 live_coord = (234, 14)
 highscore = [(30000, "QIX") for i in range(10)]
-up = down = left = right = False
+fire_slow = fire_fast = up = down = left = right = False
 
 
 def hal_blt(img, coords):
@@ -363,6 +377,13 @@ def paint_score():
         print_at(str(scores[index]), coords, color[WHITE], use_font=FONT_SCORE)
 
 
+def paint_playerpath():
+    idx = DARKRED  # paint playerpath
+    if move_mode[1] == MM_SPEED_FAST:
+        idx = CYAN
+    draw_list(players_path, color[idx], False)
+
+
 def paint_claimed_and_lives():
     print_at("CLAIMED", (0, 22), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
     print_at("0%  75%", (0, 29), txt_color=color[YELLOW], center_flags=CENTER_X, anti_aliasing=0)
@@ -396,20 +417,28 @@ def paint_game():
     paint_score()
     paint_playfield()
     paint_claimed_and_lives()
+    paint_playerpath()
     paint_player()
 
 
 def move_player(movement):
+    global move_mode, players_path, half_frame_rate
+    half_frame_rate = False
     if [0, 0] == movement:
         return player_coords[current_player]
+    if move_mode[0] != MM_GRID and move_mode[1] == MM_SPEED_SLOW and frame_counter % 2 == 1:
+        half_frame_rate = True
+        return player_coords[current_player]  # process slow movement with half of the framerate to avoid floats
     # get all lines our player stands on..(max. 2, if player stays on corner)
     possible_move = []
-    possible_move = find_intersect_index(playfield[current_player], player_coords[current_player])
+    if move_mode[0] == MM_GRID:
+        possible_move = find_intersect_index(playfield[current_player], player_coords[current_player])
     candidate = list(player_coords[current_player])
     candidate = vector_add(candidate, movement)
 
     if len(possible_move) > 0:  # Player is standing on grid
         new_result = find_intersect_index(playfield[current_player], candidate)
+        # if candidate is still on same segment fall through..
         if len(list(set(possible_move) & set(new_result))) == 0:
             # we are leaving the segment, either by overshooting ... or starting a new line
             # go single pixel into direction of candidate
@@ -418,8 +447,21 @@ def move_player(movement):
                 short_candidate[0] += math.copysign(1, movement[0])
             if movement[1] != 0:
                 short_candidate[1] += math.copysign(1, movement[1])
-            if is_inside(playfield[current_player], short_candidate, strict=True):
-                candidate = player_coords[current_player]
+            if is_inside(playfield[current_player], short_candidate, strict=True) and (fire_slow or fire_fast):
+                # initialize a new PATH
+                move_mode[0] = MM_HORIZONTAL
+                if movement[0] == 0:
+                    move_mode[0] = MM_VERTICAL
+                move_mode[1] = MM_SPEED_FAST
+                if fire_slow:
+                    move_mode[1] = MM_SPEED_SLOW
+                # todo: check that  player_path and candidate do not overlap with playfield partially
+                #       (will trigger empty polygon fill)
+                collision = check_line_vs_poly(player_coords[current_player], short_candidate,
+                                               playfield[current_player], close=True, sort=False)
+                start_point = get_first_collision(collision, ignore_pt=player_coords[current_player])
+                players_path = [start_point, start_point]
+                possible_move = []  # allows to jump into next outer if for free roaming
             else:  # just overshooting..clip it to last corner point
                 # intersecting movement with playfield
                 tmp = [playfield[current_player][possible_move[0] - 1]]
@@ -428,11 +470,54 @@ def move_player(movement):
                 tmp.append(playfield[current_player][(possible_move[-1] + 1) % len(playfield[current_player])])
                 collision = check_line_vs_poly(player_coords[current_player], candidate, tmp, close=False)
                 candidate = get_first_collision(collision, ignore_pt=player_coords[current_player])
+
+    if len(possible_move) == 0:  # Player is roaming a new line
+        if fire_slow or fire_fast:
+            old_movemode = move_mode[0]
+            if movement[0] != 0:
+                move_mode[0] = MM_HORIZONTAL
+                movement[1] = 0
+            elif movement[1] != 0:
+                move_mode[0] = MM_VERTICAL
+            if old_movemode != move_mode[0]:  # change of direction -> store coord
+                players_path.pop()  # replace last coords as they re now set as cornerstone
+                players_path.append((player_coords[current_player][0], player_coords[current_player][1]))
+                players_path.append((player_coords[current_player][0], player_coords[current_player][1]))
+            else:
+                players_path.pop()  # remove last coords as they are current position
+                players_path.append((player_coords[current_player][0], player_coords[current_player][1]))
+            # check for inter path collision
+            collision = check_line_vs_poly(player_coords[current_player], candidate, players_path, close=False)
+            candidate_tmp = get_first_collision(collision, ignore_pt=player_coords[current_player])
+            if not vector_equal(candidate_tmp, player_coords[current_player]) and \
+                    not vector_equal(candidate_tmp, players_path[0]):  # player touches his own path: do not move
+                candidate = list(player_coords[current_player])
+            players_path.pop()
+            players_path.append((candidate[0], candidate[1]))
+            # check for playfield collision
+            collision = check_line_vs_poly(player_coords[current_player], candidate, playfield[current_player],
+                                           close=True)
+            candidate_tmp = get_first_collision(collision, ignore_pt=player_coords[current_player])
+            if not vector_equal(candidate_tmp, player_coords[current_player]) and \
+                    not vector_equal(candidate_tmp, players_path[0]):
+                players_path.pop()  # player touches playfield => split field and end free_mode
+                players_path.append((candidate_tmp[0], candidate_tmp[1]))
+                players_path = [(int(x[0]), int(x[1])) for x in players_path]  # conv playerpath to int (fill algo)
+                candidate = players_path[-1]
+
+        else:  # in roaming mode only move if fast or slow button is pressed
+            candidate = list(player_coords[current_player])
+        # we are not allowing moving outside the playfield
+    if not is_inside(playfield[current_player], candidate, strict=False):
+        candidate = player_coords[current_player]
     return candidate
 
 
 def handle_movement():
+    global move_mode
     movement = [0, 0]
+    if fire_fast and move_mode[1] == MM_SPEED_SLOW:
+        move_mode[1] = MM_SPEED_FAST
     if left:
         movement[0] -= 1
     if right:
@@ -451,7 +536,7 @@ def reset_playfield(index_player):
 
 
 def init():
-    global window_surface, screen, logo, fonts, active_live, inactive_live, player_lives, player_coords
+    global window_surface, screen, logo, fonts, active_live, inactive_live, player_lives, player_coords, move_mode
     pygame.init()
     window_surface = pygame.display.set_mode([WINDOW_WIDTH, WINDOW_HEIGHT])
     screen = pygame.Surface((WIDTH, HEIGHT))
@@ -467,10 +552,11 @@ def init():
     reset_playfield(0)
     player_lives = [start_player_lives, start_player_lives]
     player_coords = [player_start, player_start]
+    move_mode = [MM_GRID, MM_SPEED_SLOW]
 
 
 def press_key(key):
-    global pressed_keys, left, right, up, down
+    global pressed_keys, left, right, up, down, fire_slow, fire_fast
     if key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN]:
         pressed_keys.append(key)
     if key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN]:
@@ -483,13 +569,21 @@ def press_key(key):
         up = True
     if key == pygame.K_DOWN and pygame.K_UP not in pressed_keys:
         down = True
+    if key == pygame.K_LALT:
+        fire_slow = True
+    if key == pygame.K_LCTRL:
+        fire_fast = True
 
 
 def release_key(key):
-    global pressed_keys, left, right, up, down
+    global pressed_keys, left, right, up, down, fire_slow, fire_fast
     if key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN]:
         pressed_keys.remove(key)
     status = False
+    if key == pygame.K_LALT:
+        fire_slow = status
+    if key == pygame.K_LCTRL:
+        fire_fast = status
     if len(pressed_keys) > 0:
         status = True
         key = pressed_keys[-1]
@@ -538,6 +632,8 @@ if __name__ == '__main__':
     print("On the occasion of the 40th anniversary of the release at 18th. October 2021")
     print("Controls:")
     print("The standard MAME keyset is used:")
+    print("<CTRL> is FAST button")
+    print("<ALT> is SLOW button")
     print("Cursor keys are Joystick")
     init()
     gameloop()
