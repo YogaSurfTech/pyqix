@@ -16,7 +16,10 @@ a sneak-peek release can be found here: https://github.com/YogaSurfTech/pyqix/re
  
  Cursor keys are Joystick
 
-complete source code will be released here on Qix's 40th Birthday
+complete source code and a ten-part tutorial was released  on Qix's 40th Birthday on 18. October 2021
+
+Tutorial:
+https://github.com/YogaSurfTech/pyqix/wiki
 
 ## Screenshots
 Here are some screenshots as teasers:
