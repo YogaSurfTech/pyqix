@@ -514,9 +514,9 @@ def is_inside(polygon, candidate, outside_point=(), strict=True):
             if vertex[0] < min_x:
                 min_x = vertex[0]
             if vertex[1] > max_y:
-                max_y = vertex[0]
+                max_y = vertex[1]
             if vertex[1] < min_y:
-                min_y = vertex[0]
+                min_y = vertex[1]
         delta = (max_x - min_x, max_y - min_y)  # diagonal of bounding box
         outside_point = (max_x + delta[0], max_y + delta[1])  # move outside
     intersection_count = 0
