@@ -3,6 +3,8 @@ A faithful remake of the 1981 Taito Game Qix for the 40th anniversary on 18th Oc
 
 Updated for the 45th anniversary on 18th October 2026
 
+**Deliberately a single file without classes:** written for absolute pygame beginners. See the [FAQ](https://github.com/YogaSurfTech/pyqix/wiki/FAQ) for why.
+
 ## Install and run
   You need Python 3 and pygame 2 (tested with Python 3.10 and pygame 2.6.1):
 
